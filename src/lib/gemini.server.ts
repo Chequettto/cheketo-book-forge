@@ -4,8 +4,8 @@
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const TEXT_MODEL = "gemini-2.5-flash";
-const IMAGE_MODEL = "gemini-2.5-flash-image";
+const TEXT_MODEL = "gemini-3.6-flash";
+const IMAGE_MODEL = "gemini-3.1-flash-image";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export function getGlobalKeys(): { index: number; key: string }[] {
@@ -115,7 +115,55 @@ export function generateText(
 }
 
 /** Gera a imagem da capa. Retorna bytes PNG/JPEG. */
-export function generateCoverImage(
+function base64ToBytes(data: string): Uint8Array {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/**
+ * Gera a capa. Tenta as 6 chaves globais do Gemini e, se todas falharem
+ * (cota de imagem indisponível na conta), usa a IA nativa da Lovable.
+ */
+export async function generateCoverImage(
+  prompt: string,
+  options: RotateOptions,
+): Promise<{ bytes: Uint8Array; mimeType: string }> {
+  try {
+    return await generateCoverImageWithGemini(prompt, options);
+  } catch (geminiError) {
+    const fallbackKey = process.env["LOVABLE_API_KEY"];
+    if (!fallbackKey) throw geminiError;
+
+    const res = await fetch("https://ai.gateway.lovable.dev/v1/images/generations", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${fallbackKey}`,
+      },
+      body: JSON.stringify({
+        model: "openai/gpt-image-2.5-sunburst",
+        prompt,
+        size: "1024x1536",
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(
+        `Capa indisponível. Gemini: ${
+          geminiError instanceof Error ? geminiError.message : String(geminiError)
+        } | Lovable AI ${res.status}: ${body.slice(0, 200)}`,
+      );
+    }
+    const json = (await res.json()) as { data?: { b64_json?: string }[] };
+    const b64 = json.data?.[0]?.b64_json;
+    if (!b64) throw new Error("A IA de imagem não retornou a capa.");
+    return { bytes: base64ToBytes(b64), mimeType: "image/png" };
+  }
+}
+
+function generateCoverImageWithGemini(
   prompt: string,
   options: RotateOptions,
 ): Promise<{ bytes: Uint8Array; mimeType: string }> {
@@ -145,9 +193,6 @@ export function generateCoverImage(
     const data = part?.inlineData?.data;
     if (!data) throw new Error("O modelo não retornou imagem.");
 
-    const binary = atob(data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return { bytes, mimeType: part?.inlineData?.mimeType ?? "image/png" };
+    return { bytes: base64ToBytes(data), mimeType: part?.inlineData?.mimeType ?? "image/png" };
   });
 }

@@ -220,20 +220,35 @@ export const generateCover = createServerFn({ method: "POST" })
       .eq("id", data.ebookId);
 
     const { generateCoverImage } = await import("./gemini.server");
-    const { bytes, mimeType } = await generateCoverImage(
+    let cover: { bytes: Uint8Array; mimeType: string } | null = null;
+    try {
+      cover = await generateCoverImage(
       `Capa profissional de e-book em alta resolução, proporção vertical 2:3, qualidade editorial premium.
 Título na capa: "${ebook.title}"${ebook.subtitle ? `\nSubtítulo: "${ebook.subtitle}"` : ""}
 Autor: "${ebook.author}"
 Direção visual pedida: ${ebook.cover_prompt || ebook.niche}
 Tipografia legível e bem hierarquizada, composição limpa, sem marcas d'água.`,
-      { stage: "cover", ebookId: data.ebookId },
-    );
+        { stage: "cover", ebookId: data.ebookId },
+      );
+    } catch (error) {
+      // A capa nunca derruba a geração: o e-book fica pronto mesmo sem imagem.
+      await supabase
+        .from("ebooks")
+        .update({
+          status: "ready",
+          progress: 100,
+          progress_label: "E-book pronto (capa indisponível)",
+          error: error instanceof Error ? error.message.slice(0, 500) : "Falha na capa",
+        })
+        .eq("id", data.ebookId);
+      return { path: null as string | null };
+    }
 
     const path = `${userId}/${data.ebookId}.png`;
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error: uploadError } = await supabaseAdmin.storage
       .from("covers")
-      .upload(path, bytes, { contentType: mimeType, upsert: true });
+      .upload(path, cover.bytes, { contentType: cover.mimeType, upsert: true });
     if (uploadError) throw new Error(uploadError.message);
 
     await supabase
@@ -246,7 +261,7 @@ Tipografia legível e bem hierarquizada, composição limpa, sem marcas d'água.
       })
       .eq("id", data.ebookId);
 
-    return { path };
+    return { path: path as string | null };
   });
 
 /** Detalhes completos do e-book, com URL assinada da capa. */
