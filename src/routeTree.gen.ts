@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiPublicAsaasWebhookRouteImport } from './routes/api/public/asaas-webhook'
+import { Route as ApiDownloadIdFormatRouteImport } from './routes/api/download.$id.$format'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,31 +23,41 @@ const ApiPublicAsaasWebhookRoute = ApiPublicAsaasWebhookRouteImport.update({
   path: '/api/public/asaas-webhook',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiDownloadIdFormatRoute = ApiDownloadIdFormatRouteImport.update({
+  id: '/api/download/$id/$format',
+  path: '/api/download/$id/$format',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
+  '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
+  '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
+  '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/public/asaas-webhook'
+  fullPaths: '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/public/asaas-webhook'
-  id: '__root__' | '/' | '/api/public/asaas-webhook'
+  to: '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+  id:
+    '__root__' | '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiPublicAsaasWebhookRoute: typeof ApiPublicAsaasWebhookRoute
+  ApiDownloadIdFormatRoute: typeof ApiDownloadIdFormatRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -65,12 +76,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicAsaasWebhookRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/download/$id/$format': {
+      id: '/api/download/$id/$format'
+      path: '/api/download/$id/$format'
+      fullPath: '/api/download/$id/$format'
+      preLoaderRoute: typeof ApiDownloadIdFormatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiPublicAsaasWebhookRoute: ApiPublicAsaasWebhookRoute,
+  ApiDownloadIdFormatRoute: ApiDownloadIdFormatRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
