@@ -1,0 +1,217 @@
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import { Header } from "@/components/Brand";
+import { useAuth } from "@/hooks/useAuth";
+import { createEbook, generateChapter, generateCover } from "@/lib/ebooks.functions";
+
+export const Route = createFileRoute("/criar")({
+  head: () => ({
+    meta: [
+      { title: "Criar e-book — Chequetto" },
+      {
+        name: "description",
+        content: "Preencha título, nicho, capa e volume: a Chequetto escreve e revisa tudo.",
+      },
+      { property: "og:title", content: "Criar e-book — Chequetto" },
+      { property: "og:description", content: "Gere um e-book completo com IA em minutos." },
+    ],
+  }),
+  component: CreatePage,
+});
+
+type Step = { label: string; done: boolean };
+
+function CreatePage() {
+  const navigate = useNavigate();
+  const { session, loading } = useAuth();
+  const runCreate = useServerFn(createEbook);
+  const runChapter = useServerFn(generateChapter);
+  const runCover = useServerFn(generateCover);
+
+  const [form, setForm] = useState({
+    title: "",
+    subtitle: "",
+    author: "",
+    niche: "",
+    coverPrompt: "",
+    chaptersCount: 6,
+    pagesCount: 40,
+  });
+  const [running, setRunning] = useState(false);
+  const [steps, setSteps] = useState<Step[]>([]);
+  const [current, setCurrent] = useState("");
+
+  useEffect(() => {
+    if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
+  }, [loading, session, navigate]);
+
+  function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
+    setForm((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function generate(event: React.FormEvent) {
+    event.preventDefault();
+    if (form.niche.trim().length < 20) {
+      toast.error("Descreva o nicho com pelo menos 20 caracteres.");
+      return;
+    }
+    setRunning(true);
+    setSteps([]);
+    try {
+      setCurrent("Estruturando o sumário…");
+      const { ebookId, titles } = await runCreate({ data: form });
+      setSteps(titles.map((label) => ({ label, done: false })));
+
+      for (let position = 1; position <= titles.length; position++) {
+        setCurrent(`Escrevendo, auditando e lapidando o capítulo ${position}…`);
+        await runChapter({ data: { ebookId, position } });
+        setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
+      }
+
+      setCurrent("Renderizando a capa em alta resolução…");
+      await runCover({ data: { ebookId } });
+
+      toast.success("E-book gerado. Escolha seu plano para baixar.");
+      navigate({ to: "/ebook/$id", params: { id: ebookId } });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha na geração.");
+      setRunning(false);
+      setCurrent("");
+    }
+  }
+
+  if (running) {
+    return (
+      <div className="hero-surface min-h-screen">
+        <Header />
+        <main className="mx-auto max-w-2xl px-5 py-20">
+          <div className="panel p-8 text-center">
+            <div className="mx-auto mb-6 size-10 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <h1 className="text-2xl font-semibold">Chequetto está produzindo seu e-book</h1>
+            <p className="mt-3 text-sm text-muted-foreground">{current}</p>
+            <ul className="mt-8 space-y-2 text-left text-sm">
+              {steps.map((step, index) => (
+                <li
+                  key={index}
+                  className={`flex items-center gap-3 rounded-lg border border-border/60 px-4 py-2.5 ${
+                    step.done ? "text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  <span
+                    className={`size-2 rounded-full ${step.done ? "bg-primary" : "bg-border"}`}
+                  />
+                  {index + 1}. {step.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="hero-surface min-h-screen">
+      <Header />
+      <main className="mx-auto max-w-3xl px-5 py-12">
+        <h1 className="text-3xl font-semibold md:text-4xl">Painel de criação</h1>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Quanto mais específico o nicho, melhor o resultado editorial.
+        </p>
+
+        <form onSubmit={generate} className="panel mt-8 space-y-5 p-7">
+          <div className="grid gap-5 md:grid-cols-2">
+            <Field label="Título do e-book">
+              <input
+                className="field focus:field-focus"
+                value={form.title}
+                onChange={(e) => update("title", e.target.value)}
+                required
+                placeholder="Tráfego pago sem desperdício"
+              />
+            </Field>
+            <Field label="Subtítulo">
+              <input
+                className="field focus:field-focus"
+                value={form.subtitle}
+                onChange={(e) => update("subtitle", e.target.value)}
+                placeholder="O método de campanhas lucrativas"
+              />
+            </Field>
+          </div>
+
+          <Field label="Nome do autor">
+            <input
+              className="field focus:field-focus"
+              value={form.author}
+              onChange={(e) => update("author", e.target.value)}
+              required
+              placeholder="Sandro Chequetto"
+            />
+          </Field>
+
+          <Field label="Descrição do nicho / conteúdo">
+            <textarea
+              className="field focus:field-focus min-h-40 resize-y"
+              value={form.niche}
+              onChange={(e) => update("niche", e.target.value)}
+              required
+              placeholder="Tema, objetivo, público-alvo e os pontos centrais que devem ser abordados."
+            />
+          </Field>
+
+          <Field label="Descrição da capa">
+            <textarea
+              className="field focus:field-focus min-h-28 resize-y"
+              value={form.coverPrompt}
+              onChange={(e) => update("coverPrompt", e.target.value)}
+              placeholder="Estilo, cores, elementos visuais e clima desejado para a capa."
+            />
+          </Field>
+
+          <div className="grid gap-5 md:grid-cols-2">
+            <Field label={`Quantidade de capítulos: ${form.chaptersCount}`}>
+              <input
+                type="number"
+                min={1}
+                max={20}
+                className="field focus:field-focus"
+                value={form.chaptersCount}
+                onChange={(e) => update("chaptersCount", Number(e.target.value))}
+              />
+            </Field>
+            <Field label={`Meta de páginas: ${form.pagesCount}`}>
+              <input
+                type="number"
+                min={5}
+                max={300}
+                className="field focus:field-focus"
+                value={form.pagesCount}
+                onChange={(e) => update("pagesCount", Number(e.target.value))}
+              />
+            </Field>
+          </div>
+
+          <button type="submit" className="btn-gold hover:btn-gold-hover w-full py-3.5 text-base">
+            Gerar e-book completo
+          </button>
+          <p className="text-center text-xs text-muted-foreground">
+            A geração pode levar alguns minutos: cada capítulo passa por escrita, auditoria e
+            reescrita.
+          </p>
+        </form>
+      </main>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-2 block text-sm font-medium text-muted-foreground">{label}</span>
+      {children}
+    </label>
+  );
+}

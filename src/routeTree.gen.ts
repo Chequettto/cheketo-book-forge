@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AuthRouteImport } from './routes/auth'
 import { Route as ApiPublicAsaasWebhookRouteImport } from './routes/api/public/asaas-webhook'
 import { Route as ApiDownloadIdFormatRouteImport } from './routes/api/download.$id.$format'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AuthRoute = AuthRouteImport.update({
+  id: '/auth',
+  path: '/auth',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicAsaasWebhookRoute = ApiPublicAsaasWebhookRouteImport.update({
@@ -31,31 +37,40 @@ const ApiDownloadIdFormatRoute = ApiDownloadIdFormatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/auth': typeof AuthRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/auth': typeof AuthRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+  fullPaths:
+    '/' | '/auth' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+  to: '/' | '/auth' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
   id:
-    '__root__' | '/' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+    | '__root__'
+    | '/'
+    | '/auth'
+    | '/api/public/asaas-webhook'
+    | '/api/download/$id/$format'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AuthRoute: typeof AuthRoute
   ApiPublicAsaasWebhookRoute: typeof ApiPublicAsaasWebhookRoute
   ApiDownloadIdFormatRoute: typeof ApiDownloadIdFormatRoute
 }
@@ -67,6 +82,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/auth': {
+      id: '/auth'
+      path: '/auth'
+      fullPath: '/auth'
+      preLoaderRoute: typeof AuthRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/asaas-webhook': {
@@ -88,6 +110,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AuthRoute: AuthRoute,
   ApiPublicAsaasWebhookRoute: ApiPublicAsaasWebhookRoute,
   ApiDownloadIdFormatRoute: ApiDownloadIdFormatRoute,
 }
