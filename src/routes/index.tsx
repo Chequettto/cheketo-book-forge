@@ -44,7 +44,23 @@ const steps = [
 ];
 
 function Landing() {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!session) return;
+    let pending: string | null = null;
+    try {
+      pending = sessionStorage.getItem("chequetto:next");
+      sessionStorage.removeItem("chequetto:next");
+    } catch {
+      /* ignore */
+    }
+    if (pending && pending.startsWith("/")) navigate({ to: pending });
+  }, [session, navigate]);
+
   return (
+
     <div className="min-h-screen hero-surface">
       <Header />
 
