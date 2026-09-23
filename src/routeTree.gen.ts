@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as CriarRouteImport } from './routes/criar'
 import { Route as PainelRouteImport } from './routes/painel'
+import { Route as EbookIdRouteImport } from './routes/ebook.$id'
 import { Route as ApiPublicAsaasWebhookRouteImport } from './routes/api/public/asaas-webhook'
 import { Route as ApiDownloadIdFormatRouteImport } from './routes/api/download.$id.$format'
 
@@ -36,6 +37,11 @@ const PainelRoute = PainelRouteImport.update({
   path: '/painel',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EbookIdRoute = EbookIdRouteImport.update({
+  id: '/ebook/$id',
+  path: '/ebook/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiPublicAsaasWebhookRoute = ApiPublicAsaasWebhookRouteImport.update({
   id: '/api/public/asaas-webhook',
   path: '/api/public/asaas-webhook',
@@ -52,6 +58,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/criar': typeof CriarRoute
   '/painel': typeof PainelRoute
+  '/ebook/$id': typeof EbookIdRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/criar': typeof CriarRoute
   '/painel': typeof PainelRoute
+  '/ebook/$id': typeof EbookIdRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
@@ -69,6 +77,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/criar': typeof CriarRoute
   '/painel': typeof PainelRoute
+  '/ebook/$id': typeof EbookIdRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
@@ -79,6 +88,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/criar'
     | '/painel'
+    | '/ebook/$id'
     | '/api/public/asaas-webhook'
     | '/api/download/$id/$format'
   fileRoutesByTo: FileRoutesByTo
@@ -87,6 +97,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/criar'
     | '/painel'
+    | '/ebook/$id'
     | '/api/public/asaas-webhook'
     | '/api/download/$id/$format'
   id:
@@ -95,6 +106,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/criar'
     | '/painel'
+    | '/ebook/$id'
     | '/api/public/asaas-webhook'
     | '/api/download/$id/$format'
   fileRoutesById: FileRoutesById
@@ -104,6 +116,7 @@ export interface RootRouteChildren {
   AuthRoute: typeof AuthRoute
   CriarRoute: typeof CriarRoute
   PainelRoute: typeof PainelRoute
+  EbookIdRoute: typeof EbookIdRoute
   ApiPublicAsaasWebhookRoute: typeof ApiPublicAsaasWebhookRoute
   ApiDownloadIdFormatRoute: typeof ApiDownloadIdFormatRoute
 }
@@ -138,6 +151,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof PainelRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/ebook/$id': {
+      id: '/ebook/$id'
+      path: '/ebook/$id'
+      fullPath: '/ebook/$id'
+      preLoaderRoute: typeof EbookIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/public/asaas-webhook': {
       id: '/api/public/asaas-webhook'
       path: '/api/public/asaas-webhook'
@@ -160,6 +180,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthRoute: AuthRoute,
   CriarRoute: CriarRoute,
   PainelRoute: PainelRoute,
+  EbookIdRoute: EbookIdRoute,
   ApiPublicAsaasWebhookRoute: ApiPublicAsaasWebhookRoute,
   ApiDownloadIdFormatRoute: ApiDownloadIdFormatRoute,
 }
