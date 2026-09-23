@@ -49,7 +49,7 @@ function AuthPage() {
           },
         });
         if (error) throw error;
-        toast.success("Conta criada. Confirme o e-mail para entrar.");
+        toast.success("Conta criada! Você já está dentro.");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
