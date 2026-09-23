@@ -11,6 +11,8 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AuthRouteImport } from './routes/auth'
+import { Route as CriarRouteImport } from './routes/criar'
+import { Route as PainelRouteImport } from './routes/painel'
 import { Route as ApiPublicAsaasWebhookRouteImport } from './routes/api/public/asaas-webhook'
 import { Route as ApiDownloadIdFormatRouteImport } from './routes/api/download.$id.$format'
 
@@ -22,6 +24,16 @@ const IndexRoute = IndexRouteImport.update({
 const AuthRoute = AuthRouteImport.update({
   id: '/auth',
   path: '/auth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CriarRoute = CriarRouteImport.update({
+  id: '/criar',
+  path: '/criar',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PainelRoute = PainelRouteImport.update({
+  id: '/painel',
+  path: '/painel',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiPublicAsaasWebhookRoute = ApiPublicAsaasWebhookRouteImport.update({
@@ -38,12 +50,16 @@ const ApiDownloadIdFormatRoute = ApiDownloadIdFormatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/criar': typeof CriarRoute
+  '/painel': typeof PainelRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/criar': typeof CriarRoute
+  '/painel': typeof PainelRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
@@ -51,19 +67,34 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/auth': typeof AuthRoute
+  '/criar': typeof CriarRoute
+  '/painel': typeof PainelRoute
   '/api/public/asaas-webhook': typeof ApiPublicAsaasWebhookRoute
   '/api/download/$id/$format': typeof ApiDownloadIdFormatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/auth' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+    | '/'
+    | '/auth'
+    | '/criar'
+    | '/painel'
+    | '/api/public/asaas-webhook'
+    | '/api/download/$id/$format'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/api/public/asaas-webhook' | '/api/download/$id/$format'
+  to:
+    | '/'
+    | '/auth'
+    | '/criar'
+    | '/painel'
+    | '/api/public/asaas-webhook'
+    | '/api/download/$id/$format'
   id:
     | '__root__'
     | '/'
     | '/auth'
+    | '/criar'
+    | '/painel'
     | '/api/public/asaas-webhook'
     | '/api/download/$id/$format'
   fileRoutesById: FileRoutesById
@@ -71,6 +102,8 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AuthRoute: typeof AuthRoute
+  CriarRoute: typeof CriarRoute
+  PainelRoute: typeof PainelRoute
   ApiPublicAsaasWebhookRoute: typeof ApiPublicAsaasWebhookRoute
   ApiDownloadIdFormatRoute: typeof ApiDownloadIdFormatRoute
 }
@@ -89,6 +122,20 @@ declare module '@tanstack/react-router' {
       path: '/auth'
       fullPath: '/auth'
       preLoaderRoute: typeof AuthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/criar': {
+      id: '/criar'
+      path: '/criar'
+      fullPath: '/criar'
+      preLoaderRoute: typeof CriarRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/painel': {
+      id: '/painel'
+      path: '/painel'
+      fullPath: '/painel'
+      preLoaderRoute: typeof PainelRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/public/asaas-webhook': {
@@ -111,6 +158,8 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AuthRoute: AuthRoute,
+  CriarRoute: CriarRoute,
+  PainelRoute: PainelRoute,
   ApiPublicAsaasWebhookRoute: ApiPublicAsaasWebhookRoute,
   ApiDownloadIdFormatRoute: ApiDownloadIdFormatRoute,
 }
