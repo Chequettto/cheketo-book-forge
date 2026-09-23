@@ -220,7 +220,9 @@ export const generateCover = createServerFn({ method: "POST" })
       .eq("id", data.ebookId);
 
     const { generateCoverImage } = await import("./gemini.server");
-    const { bytes, mimeType } = await generateCoverImage(
+    let cover: { bytes: Uint8Array; mimeType: string } | null = null;
+    try {
+      cover = await generateCoverImage(
       `Capa profissional de e-book em alta resolução, proporção vertical 2:3, qualidade editorial premium.
 Título na capa: "${ebook.title}"${ebook.subtitle ? `\nSubtítulo: "${ebook.subtitle}"` : ""}
 Autor: "${ebook.author}"
