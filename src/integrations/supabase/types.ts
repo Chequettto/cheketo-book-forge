@@ -14,7 +14,214 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      api_key_events: {
+        Row: {
+          created_at: string
+          ebook_id: string | null
+          id: string
+          key_index: number
+          message: string | null
+          stage: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          ebook_id?: string | null
+          id?: string
+          key_index: number
+          message?: string | null
+          stage?: string | null
+          status: string
+        }
+        Update: {
+          created_at?: string
+          ebook_id?: string | null
+          id?: string
+          key_index?: number
+          message?: string | null
+          stage?: string | null
+          status?: string
+        }
+        Relationships: []
+      }
+      chapters: {
+        Row: {
+          audit_report: string | null
+          content: string
+          created_at: string
+          ebook_id: string
+          id: string
+          position: number
+          title: string
+          user_id: string
+        }
+        Insert: {
+          audit_report?: string | null
+          content?: string
+          created_at?: string
+          ebook_id: string
+          id?: string
+          position: number
+          title: string
+          user_id: string
+        }
+        Update: {
+          audit_report?: string | null
+          content?: string
+          created_at?: string
+          ebook_id?: string
+          id?: string
+          position?: number
+          title?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapters_ebook_id_fkey"
+            columns: ["ebook_id"]
+            isOneToOne: false
+            referencedRelation: "ebooks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ebooks: {
+        Row: {
+          author: string
+          chapters_count: number
+          cover_prompt: string | null
+          cover_url: string | null
+          created_at: string
+          error: string | null
+          id: string
+          niche: string
+          pages_count: number
+          paid: boolean
+          progress: number
+          progress_label: string | null
+          status: string
+          subtitle: string | null
+          title: string
+          user_id: string
+        }
+        Insert: {
+          author: string
+          chapters_count?: number
+          cover_prompt?: string | null
+          cover_url?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          niche: string
+          pages_count?: number
+          paid?: boolean
+          progress?: number
+          progress_label?: string | null
+          status?: string
+          subtitle?: string | null
+          title: string
+          user_id: string
+        }
+        Update: {
+          author?: string
+          chapters_count?: number
+          cover_prompt?: string | null
+          cover_url?: string | null
+          created_at?: string
+          error?: string | null
+          id?: string
+          niche?: string
+          pages_count?: number
+          paid?: boolean
+          progress?: number
+          progress_label?: string | null
+          status?: string
+          subtitle?: string | null
+          title?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      payments: {
+        Row: {
+          amount: number
+          asaas_customer_id: string | null
+          asaas_payment_id: string | null
+          asaas_subscription_id: string | null
+          checkout_url: string | null
+          created_at: string
+          ebook_id: string | null
+          id: string
+          plan: string
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          asaas_customer_id?: string | null
+          asaas_payment_id?: string | null
+          asaas_subscription_id?: string | null
+          checkout_url?: string | null
+          created_at?: string
+          ebook_id?: string | null
+          id?: string
+          plan: string
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          asaas_customer_id?: string | null
+          asaas_payment_id?: string | null
+          asaas_subscription_id?: string | null
+          checkout_url?: string | null
+          created_at?: string
+          ebook_id?: string | null
+          id?: string
+          plan?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "payments_ebook_id_fkey"
+            columns: ["ebook_id"]
+            isOneToOne: false
+            referencedRelation: "ebooks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          email: string | null
+          full_name: string | null
+          id: string
+          plan: string
+          plan_expires_at: string | null
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id: string
+          plan?: string
+          plan_expires_at?: string | null
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          full_name?: string | null
+          id?: string
+          plan?: string
+          plan_expires_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
