@@ -4,8 +4,8 @@
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const TEXT_MODEL = "gemini-2.5-flash";
-const IMAGE_MODEL = "gemini-2.5-flash-image";
+const TEXT_MODEL = "gemini-3.6-flash";
+const IMAGE_MODEL = "gemini-3.1-flash-image";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export function getGlobalKeys(): { index: number; key: string }[] {
