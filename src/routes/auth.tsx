@@ -49,7 +49,7 @@ function AuthPage() {
           },
         });
         if (error) throw error;
-        toast.success("Conta criada. Confirme o e-mail para entrar.");
+        toast.success("Conta criada! Você já está dentro.");
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -62,6 +62,11 @@ function AuthPage() {
   }
 
   async function google() {
+    try {
+      sessionStorage.setItem("chequetto:next", next);
+    } catch {
+      /* ignore */
+    }
     const result = await lovable.auth.signInWithOAuth("google", {
       redirect_uri: window.location.origin,
     });
@@ -72,6 +77,7 @@ function AuthPage() {
     if (result.redirected) return;
     navigate({ to: next });
   }
+
 
   return (
     <div className="hero-surface flex min-h-screen items-center justify-center px-5 py-16">

@@ -1,6 +1,9 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useEffect } from "react";
 import { Brand, Header } from "@/components/Brand";
+import { useAuth } from "@/hooks/useAuth";
 import { BookOpen, Check, ScanSearch, Sparkles, Wand2 } from "lucide-react";
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -41,7 +44,23 @@ const steps = [
 ];
 
 function Landing() {
+  const { session } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!session) return;
+    let pending: string | null = null;
+    try {
+      pending = sessionStorage.getItem("chequetto:next");
+      sessionStorage.removeItem("chequetto:next");
+    } catch {
+      /* ignore */
+    }
+    if (pending && pending.startsWith("/")) navigate({ to: pending });
+  }, [session, navigate]);
+
   return (
+
     <div className="min-h-screen hero-surface">
       <Header />
 
