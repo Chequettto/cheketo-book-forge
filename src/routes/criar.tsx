@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Header } from "@/components/Brand";
 import { useAuth } from "@/hooks/useAuth";
-import { createEbook, generateChapter, generateCover } from "@/lib/ebooks.functions";
+import { createEbook, generateChapter, generateCover, uploadCover } from "@/lib/ebooks.functions";
 
 export const Route = createFileRoute("/criar")({
   head: () => ({
@@ -29,6 +29,7 @@ function CreatePage() {
   const runCreate = useServerFn(createEbook);
   const runChapter = useServerFn(generateChapter);
   const runCover = useServerFn(generateCover);
+  const runUploadCover = useServerFn(uploadCover);
 
   const [form, setForm] = useState({
     title: "",
@@ -39,9 +40,13 @@ function CreatePage() {
     chaptersCount: 6,
     pagesCount: 40,
   });
+  const [coverMode, setCoverMode] = useState<"ai" | "upload">("ai");
+  const [coverFile, setCoverFile] = useState<{ base64: string; mimeType: string } | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
   const [current, setCurrent] = useState("");
+
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
