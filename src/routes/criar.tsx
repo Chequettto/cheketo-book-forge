@@ -50,7 +50,6 @@ function CreatePage() {
   // não precisar chamar createEbook de novo nem reescrever capítulos prontos.
   const [resumable, setResumable] = useState<{ ebookId: string; titles: string[] } | null>(null);
 
-
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
   }, [loading, session, navigate]);
@@ -74,7 +73,6 @@ function CreatePage() {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
 
-
   /**
    * Roda os capítulos + capa de um e-book já criado. Capítulos que já têm
    * conteúdo e auditoria prontos de uma tentativa anterior são pulados no
@@ -85,20 +83,23 @@ function CreatePage() {
     setSteps(titles.map((label) => ({ label, done: false })));
 
     for (let position = 1; position <= titles.length; position++) {
-      setCurrent(`Escrevendo, auditando e lapidando o capítulo ${position}…`);
-      try {
-        await runChapter({ data: { ebookId, position } });
-      } catch {
-        // Uma falha isolada (ex. pico de cota nas 6 chaves) não deve derrubar
-        // o e-book inteiro: espera um pouco e tenta esse capítulo mais uma vez
-        // antes de desistir de verdade.
-        setCurrent(`Capítulo ${position} deu erro, tentando novamente…`);
-        await new Promise((resolve) => setTimeout(resolve, 5000));
-        await runChapter({ data: { ebookId, position } });
+      let complete = false;
+      for (let blockIndex = 1; blockIndex <= 6 && !complete; blockIndex++) {
+        setCurrent(`Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6...`);
+        let result;
+        try {
+          result = await runChapter({ data: { ebookId, position, blockIndex } });
+        } catch {
+          setCurrent(`Capítulo ${position} - Sub-bloco ${blockIndex}/6: tentando novamente...`);
+          await new Promise((resolve) => setTimeout(resolve, 5000));
+          result = await runChapter({ data: { ebookId, position, blockIndex } });
+        }
+        complete = result.complete;
+        setCurrent(
+          `Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6 (Groq Chave ${result.keyIndex}/6)...`,
+        );
       }
       setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
-      // Espaço entre capítulos: evita empilhar 3 chamadas ao Gemini por
-      // capítulo de forma tão rápida que todas as 6 chaves caem juntas.
       if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1500));
     }
 
@@ -108,7 +109,7 @@ function CreatePage() {
         data: { ebookId, base64: coverFile.base64, mimeType: coverFile.mimeType as "image/png" },
       });
     } else {
-      setCurrent("Renderizando a capa em alta resolução…");
+      setCurrent("Gerando capa do e-book no Gemini...");
       await runCover({ data: { ebookId } });
     }
 
@@ -125,10 +126,11 @@ function CreatePage() {
     setRunning(true);
     setSteps([]);
     setResumable(null);
-    let created: { ebookId: string; titles: string[] } | null = null;
+    let created: { ebookId: string; titles: string[]; keyIndex: number } | null = null;
     try {
-      setCurrent("Estruturando o sumário…");
+      setCurrent("Gerando Sumário do E-book (Groq)...");
       created = await runCreate({ data: form });
+      setCurrent(`Gerando Sumário do E-book (Groq Chave ${created.keyIndex}/6)...`);
       await runPipeline(created.ebookId, created.titles);
     } catch (error) {
       if (created) setResumable(created);
@@ -193,8 +195,8 @@ function CreatePage() {
         {resumable && (
           <div className="panel mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
             <p className="text-sm text-muted-foreground">
-              A última geração parou no meio. Os capítulos já prontos não serão reescritos —
-              só o que faltou continua.
+              A última geração parou no meio. Os capítulos já prontos não serão reescritos — só o
+              que faltou continua.
             </p>
             <button
               onClick={resume}
@@ -305,7 +307,6 @@ function CreatePage() {
               </div>
             )}
           </div>
-
 
           <div className="grid gap-5 md:grid-cols-2">
             <Field label={`Quantidade de capítulos: ${form.chaptersCount}`}>

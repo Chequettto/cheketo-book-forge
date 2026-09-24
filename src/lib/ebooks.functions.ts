@@ -44,8 +44,8 @@ export const createEbook = createServerFn({ method: "POST" })
       .single();
     if (error || !ebook) throw new Error(error?.message ?? "Falha ao criar o e-book.");
 
-    const { generateText } = await import("./gemini.server");
-    const raw = await generateText(
+    const { generateGroqText } = await import("./groq.server");
+    const result = await generateGroqText(
       EDITOR_SYSTEM,
       `Crie o sumário de um e-book.
 Título: ${data.title}
@@ -58,10 +58,16 @@ Retorne EXATAMENTE ${data.chaptersCount} títulos de capítulos, um por linha, n
 Cada título deve ser específico e progressivo (sem repetir ideias). Não escreva mais nada.`,
       { stage: "outline", ebookId: ebook.id },
     );
+    const raw = result.text;
 
     const titles = raw
       .split("\n")
-      .map((line) => line.replace(/^\s*\d+[\.\)-]\s*/, "").replace(/[*#]/g, "").trim())
+      .map((line) =>
+        line
+          .replace(/^\s*\d+[.)-]\s*/, "")
+          .replace(/[*#]/g, "")
+          .trim(),
+      )
       .filter(Boolean)
       .slice(0, data.chaptersCount);
 
@@ -82,24 +88,33 @@ Cada título deve ser específico e progressivo (sem repetir ideias). Não escre
 
     await supabase
       .from("ebooks")
-      .update({ status: "writing", progress: 5, progress_label: "Sumário pronto" })
+      .update({
+        status: "writing",
+        progress: 5,
+        progress_label: `Gerando Sumário do E-book (Groq Chave ${result.keyIndex}/6)...`,
+      })
       .eq("id", ebook.id);
 
-    return { ebookId: ebook.id, titles };
+    return { ebookId: ebook.id, titles, keyIndex: result.keyIndex };
   });
 
-/**
- * Pipeline anti-enrolação de um capítulo:
- * 1. rascunho bruto -> 2. auditoria crítica -> 3. reescrita lapidada.
- */
+function limitWords(text: string, maxWords: number) {
+  return text.trim().split(/\s+/).slice(0, maxWords).join(" ").trim();
+}
+
 export const generateChapter = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({ ebookId: z.string().uuid(), position: z.number().int().min(1) }).parse(input),
+    z
+      .object({
+        ebookId: z.string().uuid(),
+        position: z.number().int().min(1),
+        blockIndex: z.number().int().min(1).max(6),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
-
     const { data: ebook } = await supabase
       .from("ebooks")
       .select("*")
@@ -109,116 +124,82 @@ export const generateChapter = createServerFn({ method: "POST" })
 
     const { data: chapters } = await supabase
       .from("chapters")
-      .select("position, title, content, audit_report")
+      .select("position, title, content")
       .eq("ebook_id", data.ebookId)
       .order("position");
-    const chapter = chapters?.find((c) => c.position === data.position);
+    const chapter = chapters?.find((item) => item.position === data.position);
     if (!chapter) throw new Error("Capítulo não encontrado.");
 
-    // Já foi escrito, auditado e lapidado numa tentativa anterior: não reescreve
-    // do zero, só confirma o progresso e retorna — isso é o que permite retomar
-    // uma geração que travou no meio sem gastar de novo os capítulos prontos.
-    if (chapter.content && chapter.audit_report) {
-      const progress = Math.round(5 + (data.position / ebook.chapters_count) * 80);
-      await supabase
-        .from("ebooks")
-        .update({ progress, progress_label: `Capítulo ${data.position} já estava pronto` })
-        .eq("id", data.ebookId);
+    const existingContent = chapter.content?.trim() ?? "";
+    const currentWords = existingContent ? existingContent.split(/\s+/).length : 0;
+    const maxWords = 4000;
+    if (currentWords >= maxWords) {
       return {
         position: data.position,
-        words: chapter.content.split(/\s+/).length,
-        progress,
-        skipped: true,
+        blockIndex: data.blockIndex,
+        words: currentWords,
+        complete: true,
+        keyIndex: 0,
       };
     }
 
-    const outline = (chapters ?? []).map((c) => `${c.position}. ${c.title}`).join("\n");
-    const alreadyWritten = (chapters ?? [])
-      .filter((c) => c.position < data.position && c.content)
-      .map((c) => `${c.title}: ${c.content.slice(0, 600)}`)
-      .join("\n---\n");
-
-    const wordsTarget = Math.max(
-      600,
-      Math.round((ebook.pages_count * 320) / Math.max(1, ebook.chapters_count)),
-    );
-
-    const { generateText } = await import("./gemini.server");
-
-    // 1. Rascunho bruto
-    const draft = await generateText(
+    const outline = (chapters ?? []).map((item) => `${item.position}. ${item.title}`).join("\n");
+    const previousTail = existingContent.split(/\s+/).slice(-150).join(" ");
+    const remainingWords = maxWords - currentWords;
+    const { generateGroqText } = await import("./groq.server");
+    const result = await generateGroqText(
       EDITOR_SYSTEM,
       `E-book: "${ebook.title}" — ${ebook.subtitle ?? ""}
-Autor: ${ebook.author}
-Tema e objetivos: ${ebook.niche}
+Tema geral e objetivos: ${ebook.niche}
 
 Sumário completo:
 ${outline}
 
-${alreadyWritten ? `Resumo do que já foi escrito (NÃO repita):\n${alreadyWritten}` : ""}
+Capítulo ${data.position}: "${chapter.title}"
+Sub-bloco atual: ${data.blockIndex} de 6
+Escreva somente o próximo sub-bloco, com 600 a 800 palavras, desenvolvendo uma ideia nova e prática do capítulo.
+Use subtítulos curtos, exemplos concretos e passos acionáveis. Não repita conteúdo anterior e não use uma conclusão genérica.
+${previousTail ? `Últimas 150 palavras do sub-bloco anterior para manter a continuidade:\n${previousTail}` : "Este é o primeiro sub-bloco; introduza o tema diretamente."}
 
-Escreva o capítulo ${data.position}: "${chapter.title}".
-Extensão alvo: aproximadamente ${wordsTarget} palavras.
-Use subtítulos curtos, exemplos práticos, passos acionáveis e, quando fizer sentido, listas objetivas.
-Não escreva título do e-book nem conclusão genérica. Comece direto pelo conteúdo do capítulo.`,
-      { stage: "draft", ebookId: data.ebookId },
+${remainingWords <= 800 ? `Este é o último espaço disponível. Escreva no máximo ${remainingWords} palavras e finalize o capítulo.\n` : ""}
+Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]] ao final da resposta.`,
+      { stage: "chapter_block", ebookId: data.ebookId },
     );
 
-    // Salva o rascunho imediatamente: se a auditoria ou a reescrita falharem
-    // depois (ex. cota do Gemini), o capítulo não fica em branco — o rascunho
-    // já está no banco e a tentativa seguinte não perde esse trabalho.
-    await supabase
-      .from("chapters")
-      .update({ content: draft.trim() })
-      .eq("ebook_id", data.ebookId)
-      .eq("position", data.position);
-
-    // 2. Autocrítica + reescrita num único passe (era auditoria + reescrita em
-    // 2 chamadas separadas — juntar num só corte reduz de 3 para 2 chamadas
-    // ao Gemini por capítulo, o que reduz proporcionalmente o risco de bater
-    // no limite de cota das 6 chaves globais no meio da geração).
-    const revisionRaw = await generateText(
-      "Você é um revisor editorial implacável, especialista em não-ficção prática, e reescreve o texto você mesmo depois de apontar as falhas.",
-      `Leia o rascunho abaixo do capítulo "${chapter.title}" do e-book "${ebook.title}" (${ebook.niche}).
-
-Primeiro, em até 5 linhas, aponte os problemas reais: repetições, enrolação, falta de exemplos concretos, desvio do tema, ritmo.
-Depois, na mesma resposta, reescreva o capítulo INTEIRO corrigindo esses problemas, aprofundando tecnicamente,
-mantendo aproximadamente ${wordsTarget} palavras e preservando o tema "${chapter.title}".
-
-RASCUNHO:
-"""${draft}"""
-
-Retorne EXATAMENTE neste formato, sem nada antes ou depois:
-CRÍTICA:
-<crítica em até 5 linhas>
----CAPÍTULO FINAL---
-<capítulo final revisado, começando direto pelo conteúdo>`,
-      { stage: "revise", ebookId: data.ebookId },
+    const completedByMarker = /\[\[CAPITULO_CONCLUIDO\]\]/i.test(result.text);
+    const block = limitWords(
+      result.text.replace(/\[\[CAPITULO_CONCLUIDO\]\]/gi, ""),
+      Math.min(800, remainingWords),
     );
-
-    const marker = /---CAP[IÍ]TULO FINAL---/i;
-    const [rawCritique, rawFinal] = revisionRaw.split(marker);
-    const audit = (rawCritique ?? "").replace(/^CR[IÍ]TICA:\s*/i, "").trim() || "Revisado sem observações.";
-    // Se o modelo não seguir o formato à risca, usa a resposta inteira como
-    // capítulo em vez de descartar o trabalho já pago/gerado.
-    const polished = (rawFinal ?? revisionRaw).trim();
-
-    await supabase
-      .from("chapters")
-      .update({ content: polished.trim(), audit_report: audit })
-      .eq("ebook_id", data.ebookId)
-      .eq("position", data.position);
-
+    const combined = [existingContent, block].filter(Boolean).join("\n\n").trim();
+    const totalWords = combined.split(/\s+/).filter(Boolean).length;
+    const complete = completedByMarker || totalWords >= maxWords || data.blockIndex >= 6;
     const progress = Math.round(5 + (data.position / ebook.chapters_count) * 80);
+
+    await supabase
+      .from("chapters")
+      .update({
+        content: combined,
+        audit_report: complete ? "Concluído pela geração fracionada da Groq." : null,
+      })
+      .eq("ebook_id", data.ebookId)
+      .eq("position", data.position);
     await supabase
       .from("ebooks")
       .update({
         progress,
-        progress_label: `Capítulo ${data.position} revisado e lapidado`,
+        progress_label: `Escrevendo Capítulo ${data.position} - Sub-bloco ${data.blockIndex}/6 (Groq Chave ${result.keyIndex}/6)...`,
       })
       .eq("id", data.ebookId);
 
-    return { position: data.position, words: polished.split(/\s+/).length, progress };
+    return {
+      position: data.position,
+      blockIndex: data.blockIndex,
+      words: totalWords,
+      progress,
+      keyIndex: result.keyIndex,
+      complete,
+    };
   });
 
 /** Gera a capa em alta resolução a partir da descrição visual do usuário. */
@@ -243,7 +224,7 @@ export const generateCover = createServerFn({ method: "POST" })
     let cover: { bytes: Uint8Array; mimeType: string } | null = null;
     try {
       cover = await generateCoverImage(
-      `Capa profissional de e-book em alta resolução, proporção vertical 2:3, qualidade editorial premium.
+        `Capa profissional de e-book em alta resolução, proporção vertical 2:3, qualidade editorial premium.
 Título na capa: "${ebook.title}"${ebook.subtitle ? `\nSubtítulo: "${ebook.subtitle}"` : ""}
 Autor: "${ebook.author}"
 Direção visual pedida: ${ebook.cover_prompt || ebook.niche}
@@ -308,7 +289,8 @@ export const uploadCover = createServerFn({ method: "POST" })
     const binary = Buffer.from(data.base64.replace(/^data:[^,]+,/, ""), "base64");
     if (binary.byteLength > 10 * 1024 * 1024) throw new Error("A imagem deve ter até 10 MB.");
 
-    const ext = data.mimeType === "image/png" ? "png" : data.mimeType === "image/webp" ? "webp" : "jpg";
+    const ext =
+      data.mimeType === "image/png" ? "png" : data.mimeType === "image/webp" ? "webp" : "jpg";
     const path = `${userId}/${data.ebookId}.${ext}`;
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { error: uploadError } = await supabaseAdmin.storage
@@ -329,7 +311,6 @@ export const uploadCover = createServerFn({ method: "POST" })
 
     return { path };
   });
-
 
 /** Detalhes completos do e-book, com URL assinada da capa. */
 export const getEbook = createServerFn({ method: "POST" })

@@ -4,7 +4,6 @@
  */
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
-const TEXT_MODEL = "gemini-3.6-flash";
 const IMAGE_MODEL = "gemini-3.1-flash-image";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -18,8 +17,6 @@ export function getGlobalKeys(): { index: number; key: string }[] {
 }
 
 // Ponteiro de início da fila, distribui a carga entre as chaves.
-let cursor = 0;
-
 async function logKeyEvent(
   keyIndex: number,
   status: string,
@@ -46,7 +43,6 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Erro HTTP do Gemini com o status code preservado (em vez de só texto). */
 class GeminiApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -56,26 +52,6 @@ class GeminiApiError extends Error {
   }
 }
 
-// Conforme a doc oficial do Gemini (ai.google.dev/gemini-api/docs/troubleshooting):
-// só vale a pena tentar de novo em erros transitórios — 429 (cota/rate limit),
-// 408 (timeout) e 5xx (instabilidade do servidor). Um 400 (parâmetro ou modelo
-// inválido) é um erro na própria requisição: falha igual em qualquer chave,
-// então testar as 6 só demora mais pra dar o mesmo erro.
-const RETRYABLE_STATUS = new Set([429, 408, 500, 502, 503, 504]);
-// 401/403/402 indicam problema COM AQUELA CHAVE (revogada, sem permissão, sem
-// crédito) — não adianta esperar, mas vale tentar a próxima chave, que pode
-// ser válida.
-const KEY_SPECIFIC_STATUS = new Set([401, 402, 403]);
-
-/**
- * Executa `run` iniciando na chave atual da fila e avançando (1 -> 6) a cada
- * erro. Erros de cota/instabilidade (429/408/5xx) esperam com backoff
- * exponencial antes da próxima tentativa — igual ao SDK oficial do Gemini
- * (delay inicial ~1s, dobra a cada tentativa, teto de ~20s). Erro de chave
- * (401/403) troca de chave sem espera. Erro de requisição malformada (400,
- * 404) não faz sentido repetir em outra chave — falha na hora, com uma
- * mensagem clara, em vez de fingir que é "problema das 6 chaves".
- */
 async function withKeyRotation<T>(
   options: RotateOptions,
   run: (key: string) => Promise<T>,
@@ -88,34 +64,16 @@ async function withKeyRotation<T>(
   }
 
   let lastError: unknown = null;
-  for (let attempt = 0; attempt < keys.length; attempt++) {
-    const entry = keys[(cursor + attempt) % keys.length]!;
+  for (const entry of keys) {
     try {
       const result = await run(entry.key);
-      if (attempt > 0) cursor = (cursor + attempt) % keys.length;
       await logKeyEvent(entry.index, "success", options.stage, null, options.ebookId ?? null);
       return result;
     } catch (error) {
       lastError = error;
-      const status = error instanceof GeminiApiError ? error.status : undefined;
       const message = error instanceof Error ? error.message : String(error);
       await logKeyEvent(entry.index, "failover", options.stage, message, options.ebookId ?? null);
-
-      if (status !== undefined && !RETRYABLE_STATUS.has(status) && !KEY_SPECIFIC_STATUS.has(status)) {
-        throw new Error(
-          `O Gemini recusou a requisição (erro ${status}) — não é problema de cota nem de chave, ` +
-            `é a requisição em si (modelo, parâmetros ou formato). Testar outra chave não resolveria: ${message}`,
-        );
-      }
-
-      if (attempt < keys.length - 1) {
-        if (status === 429 || status === 408 || (status !== undefined && status >= 500)) {
-          await sleep(Math.min(1000 * 2 ** attempt, 20000));
-        } else {
-          await sleep(300);
-        }
-      }
-      // Próxima chave da sequência assume de forma transparente.
+      await sleep(300);
     }
   }
   throw new Error(
@@ -123,41 +81,6 @@ async function withKeyRotation<T>(
       lastError instanceof Error ? lastError.message : String(lastError)
     }`,
   );
-}
-
-async function callTextModel(key: string, system: string, prompt: string): Promise<string> {
-  const res = await fetch(`${BASE}/${TEXT_MODEL}:generateContent?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.85, maxOutputTokens: 8192 },
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text();
-    throw new GeminiApiError(res.status, `Gemini ${res.status}: ${body.slice(0, 300)}`);
-  }
-
-  const json = (await res.json()) as {
-    candidates?: { content?: { parts?: { text?: string }[] } }[];
-  };
-  const text = (json.candidates?.[0]?.content?.parts ?? [])
-    .map((part) => part.text ?? "")
-    .join("")
-    .trim();
-  if (!text) throw new Error("Resposta vazia do modelo.");
-  return text;
-}
-
-export function generateText(
-  system: string,
-  prompt: string,
-  options: RotateOptions,
-): Promise<string> {
-  return withKeyRotation(options, (key) => callTextModel(key, system, prompt));
 }
 
 /** Gera a imagem da capa. Retorna bytes PNG/JPEG. */
