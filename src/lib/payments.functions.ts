@@ -26,6 +26,9 @@ export const createCheckout = createServerFn({ method: "POST" })
 
     const { PLANS, findOrCreateCustomer, createLifetimeCharge, createMonthlySubscription } =
       await import("./asaas.server");
+    // payments só tem policy de SELECT para o usuário (RLS) — insert/update têm que
+    // passar pelo cliente admin (service role), que é quem tem permissão de escrita.
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
     const plan = PLANS[data.plan];
     const customerId = await findOrCreateCustomer({
@@ -34,7 +37,7 @@ export const createCheckout = createServerFn({ method: "POST" })
       cpfCnpj: data.cpfCnpj,
     });
 
-    const { data: row, error } = await supabase
+    const { data: row, error } = await supabaseAdmin
       .from("payments")
       .insert({
         user_id: userId,
@@ -54,7 +57,7 @@ export const createCheckout = createServerFn({ method: "POST" })
         ? await createLifetimeCharge({ customerId, description, externalReference: row.id })
         : await createMonthlySubscription({ customerId, description, externalReference: row.id });
 
-    await supabase
+    await supabaseAdmin
       .from("payments")
       .update({
         asaas_payment_id: charge.paymentId,

@@ -46,6 +46,9 @@ function CreatePage() {
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
   const [current, setCurrent] = useState("");
+  // Guarda o e-book em andamento quando a geração falha no meio, pra "Retomar"
+  // não precisar chamar createEbook de novo nem reescrever capítulos prontos.
+  const [resumable, setResumable] = useState<{ ebookId: string; titles: string[] } | null>(null);
 
 
   useEffect(() => {
@@ -72,6 +75,47 @@ function CreatePage() {
   }
 
 
+  /**
+   * Roda os capítulos + capa de um e-book já criado. Capítulos que já têm
+   * conteúdo e auditoria prontos de uma tentativa anterior são pulados no
+   * servidor (generateChapter detecta isso sozinho) — então chamar isso de
+   * novo depois de uma falha não reescreve do zero, só continua de onde parou.
+   */
+  async function runPipeline(ebookId: string, titles: string[]) {
+    setSteps(titles.map((label) => ({ label, done: false })));
+
+    for (let position = 1; position <= titles.length; position++) {
+      setCurrent(`Escrevendo, auditando e lapidando o capítulo ${position}…`);
+      try {
+        await runChapter({ data: { ebookId, position } });
+      } catch {
+        // Uma falha isolada (ex. pico de cota nas 6 chaves) não deve derrubar
+        // o e-book inteiro: espera um pouco e tenta esse capítulo mais uma vez
+        // antes de desistir de verdade.
+        setCurrent(`Capítulo ${position} deu erro, tentando novamente…`);
+        await new Promise((resolve) => setTimeout(resolve, 5000));
+        await runChapter({ data: { ebookId, position } });
+      }
+      setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
+      // Espaço entre capítulos: evita empilhar 3 chamadas ao Gemini por
+      // capítulo de forma tão rápida que todas as 6 chaves caem juntas.
+      if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+
+    if (coverMode === "upload" && coverFile) {
+      setCurrent("Aplicando a capa enviada…");
+      await runUploadCover({
+        data: { ebookId, base64: coverFile.base64, mimeType: coverFile.mimeType as "image/png" },
+      });
+    } else {
+      setCurrent("Renderizando a capa em alta resolução…");
+      await runCover({ data: { ebookId } });
+    }
+
+    toast.success("E-book gerado com sucesso.");
+    navigate({ to: "/ebook/$id", params: { id: ebookId } });
+  }
+
   async function generate(event: React.FormEvent) {
     event.preventDefault();
     if (form.niche.trim().length < 20) {
@@ -80,32 +124,28 @@ function CreatePage() {
     }
     setRunning(true);
     setSteps([]);
+    setResumable(null);
+    let created: { ebookId: string; titles: string[] } | null = null;
     try {
       setCurrent("Estruturando o sumário…");
-      const { ebookId, titles } = await runCreate({ data: form });
-      setSteps(titles.map((label) => ({ label, done: false })));
-
-      for (let position = 1; position <= titles.length; position++) {
-        setCurrent(`Escrevendo, auditando e lapidando o capítulo ${position}…`);
-        await runChapter({ data: { ebookId, position } });
-        setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
-      }
-
-      if (coverMode === "upload" && coverFile) {
-        setCurrent("Aplicando a capa enviada…");
-        await runUploadCover({
-          data: { ebookId, base64: coverFile.base64, mimeType: coverFile.mimeType as "image/png" },
-        });
-      } else {
-        setCurrent("Renderizando a capa em alta resolução…");
-        await runCover({ data: { ebookId } });
-      }
-
-      toast.success("E-book gerado com sucesso.");
-      navigate({ to: "/ebook/$id", params: { id: ebookId } });
-
+      created = await runCreate({ data: form });
+      await runPipeline(created.ebookId, created.titles);
     } catch (error) {
+      if (created) setResumable(created);
       toast.error(error instanceof Error ? error.message : "Falha na geração.");
+      setRunning(false);
+      setCurrent("");
+    }
+  }
+
+  async function resume() {
+    if (!resumable) return;
+    setRunning(true);
+    try {
+      await runPipeline(resumable.ebookId, resumable.titles);
+      setResumable(null);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Falha ao retomar a geração.");
       setRunning(false);
       setCurrent("");
     }
@@ -149,6 +189,21 @@ function CreatePage() {
         <p className="mt-2 text-sm text-muted-foreground">
           Quanto mais específico o nicho, melhor o resultado editorial.
         </p>
+
+        {resumable && (
+          <div className="panel mt-6 flex flex-wrap items-center justify-between gap-3 p-5">
+            <p className="text-sm text-muted-foreground">
+              A última geração parou no meio. Os capítulos já prontos não serão reescritos —
+              só o que faltou continua.
+            </p>
+            <button
+              onClick={resume}
+              className="btn-gold hover:btn-gold-hover shrink-0 px-5 py-2.5 text-sm"
+            >
+              Retomar geração
+            </button>
+          </div>
+        )}
 
         <form onSubmit={generate} className="panel mt-8 space-y-5 p-7">
           <div className="grid gap-5 md:grid-cols-2">

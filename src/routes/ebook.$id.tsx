@@ -126,34 +126,39 @@ function EbookPage() {
                 {ebook.subtitle && <p className="mt-2 text-muted-foreground">{ebook.subtitle}</p>}
                 <p className="mt-4 text-sm text-muted-foreground">por {ebook.author}</p>
 
-                {unlocked ? (
-                  <div className="mt-8">
-                    {accessQuery.data?.freeFirstEbook && (
-                      <p className="mb-3 text-sm text-primary">
-                        Cortesia: este é o seu primeiro e-book, download liberado.
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-3">
-                      <button
-                        onClick={() => download("pdf")}
-                        className="btn-gold hover:btn-gold-hover inline-flex items-center gap-2 px-6 py-3"
-                      >
-                        <Download className="size-4" /> Baixar PDF
-                      </button>
-                      <button
-                        onClick={() => download("epub")}
-                        className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 transition-colors hover:bg-card"
-                      >
-                        <Download className="size-4" /> Baixar EPUB
-                      </button>
-                    </div>
+                <div className="mt-8">
+                  {accessQuery.data?.freeFirstEbook && (
+                    <p className="mb-3 text-sm text-primary">
+                      Cortesia: este é o seu primeiro e-book, download liberado.
+                    </p>
+                  )}
+                  {!unlocked && accessQuery.data && !accessQuery.data.freeFirstEbook && (
+                    <p className="mb-3 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Lock className="size-4 text-primary" /> A partir do 2º e-book, o download
+                      é liberado depois do pagamento (plano abaixo).
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-3">
+                    <button
+                      onClick={() => download("pdf")}
+                      className="btn-gold hover:btn-gold-hover inline-flex items-center gap-2 px-6 py-3"
+                    >
+                      <Download className="size-4" /> Baixar PDF
+                    </button>
+                    <button
+                      onClick={() => download("epub")}
+                      className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 transition-colors hover:bg-card"
+                    >
+                      <Download className="size-4" /> Baixar EPUB
+                    </button>
                   </div>
-                ) : (
+                </div>
 
-                  <div className="panel mt-8 p-6">
+                {!unlocked && (
+                  <div className="panel mt-6 p-6">
                     <p className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Lock className="size-4 text-primary" /> Seu e-book está pronto. Escolha um
-                      plano para liberar o download completo.
+                      <Lock className="size-4 text-primary" /> Escolha um plano para liberar o
+                      download completo deste e-book.
                     </p>
 
                     <div className="mt-5 grid gap-3 sm:grid-cols-2">

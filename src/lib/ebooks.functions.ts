@@ -109,11 +109,28 @@ export const generateChapter = createServerFn({ method: "POST" })
 
     const { data: chapters } = await supabase
       .from("chapters")
-      .select("position, title, content")
+      .select("position, title, content, audit_report")
       .eq("ebook_id", data.ebookId)
       .order("position");
     const chapter = chapters?.find((c) => c.position === data.position);
     if (!chapter) throw new Error("Capítulo não encontrado.");
+
+    // Já foi escrito, auditado e lapidado numa tentativa anterior: não reescreve
+    // do zero, só confirma o progresso e retorna — isso é o que permite retomar
+    // uma geração que travou no meio sem gastar de novo os capítulos prontos.
+    if (chapter.content && chapter.audit_report) {
+      const progress = Math.round(5 + (data.position / ebook.chapters_count) * 80);
+      await supabase
+        .from("ebooks")
+        .update({ progress, progress_label: `Capítulo ${data.position} já estava pronto` })
+        .eq("id", data.ebookId);
+      return {
+        position: data.position,
+        words: chapter.content.split(/\s+/).length,
+        progress,
+        skipped: true,
+      };
+    }
 
     const outline = (chapters ?? []).map((c) => `${c.position}. ${c.title}`).join("\n");
     const alreadyWritten = (chapters ?? [])
@@ -146,6 +163,15 @@ Use subtítulos curtos, exemplos práticos, passos acionáveis e, quando fizer s
 Não escreva título do e-book nem conclusão genérica. Comece direto pelo conteúdo do capítulo.`,
       { stage: "draft", ebookId: data.ebookId },
     );
+
+    // Salva o rascunho imediatamente: se a auditoria ou a reescrita falharem
+    // depois (ex. cota do Gemini), o capítulo não fica em branco — o rascunho
+    // já está no banco e a tentativa seguinte não perde esse trabalho.
+    await supabase
+      .from("chapters")
+      .update({ content: draft.trim() })
+      .eq("ebook_id", data.ebookId)
+      .eq("position", data.position);
 
     // 2. Auditoria crítica real
     const audit = await generateText(

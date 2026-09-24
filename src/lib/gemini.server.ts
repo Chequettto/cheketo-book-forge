@@ -42,9 +42,17 @@ async function logKeyEvent(
 
 type RotateOptions = { stage: string; ebookId?: string | null };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Executa `run` iniciando na chave atual da fila e avançando (1 -> 6)
  * a cada erro de requisição, cota ou rate limit.
+ * Erros de limite de cota/rate limit (429) recebem uma pequena espera antes
+ * da próxima chave, pra dar tempo da cota da chave anterior liberar — martelar
+ * as 6 chaves na mesma fração de segundo faz todas caírem juntas quando o
+ * problema é cota compartilhada, não a chave em si.
  */
 async function withKeyRotation<T>(
   options: RotateOptions,
@@ -69,6 +77,10 @@ async function withKeyRotation<T>(
       lastError = error;
       const message = error instanceof Error ? error.message : String(error);
       await logKeyEvent(entry.index, "failover", options.stage, message, options.ebookId ?? null);
+      const isRateLimit = /429|quota|rate.?limit/i.test(message);
+      if (attempt < keys.length - 1) {
+        await sleep(isRateLimit ? 4000 : 800);
+      }
       // Próxima chave da sequência assume de forma transparente.
     }
   }
