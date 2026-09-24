@@ -72,16 +72,23 @@ export const getAccess = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({ ebookId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const [{ data: profile }, { data: ebook }, { data: payments }] = await Promise.all([
-      supabase.from("profiles").select("plan, plan_expires_at").eq("id", userId).maybeSingle(),
-      supabase.from("ebooks").select("paid").eq("id", data.ebookId).maybeSingle(),
-      supabase
-        .from("payments")
-        .select("status, plan, checkout_url, created_at")
-        .eq("ebook_id", data.ebookId)
-        .order("created_at", { ascending: false })
-        .limit(1),
-    ]);
+    const [{ data: profile }, { data: ebook }, { data: payments }, { data: firstEbook }] =
+      await Promise.all([
+        supabase.from("profiles").select("plan, plan_expires_at").eq("id", userId).maybeSingle(),
+        supabase.from("ebooks").select("paid").eq("id", data.ebookId).maybeSingle(),
+        supabase
+          .from("payments")
+          .select("status, plan, checkout_url, created_at")
+          .eq("ebook_id", data.ebookId)
+          .order("created_at", { ascending: false })
+          .limit(1),
+        supabase
+          .from("ebooks")
+          .select("id")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: true })
+          .limit(1),
+      ]);
 
     const planActive =
       profile?.plan === "lifetime" ||
@@ -89,10 +96,15 @@ export const getAccess = createServerFn({ method: "POST" })
         !!profile.plan_expires_at &&
         new Date(profile.plan_expires_at) > new Date());
 
+    // Cortesia: o primeiro e-book da conta tem download liberado.
+    const isFirstEbook = firstEbook?.[0]?.id === data.ebookId;
+
     return {
       plan: profile?.plan ?? "free",
       planExpiresAt: profile?.plan_expires_at ?? null,
-      unlocked: planActive || ebook?.paid === true,
+      freeFirstEbook: isFirstEbook && !planActive && ebook?.paid !== true,
+      unlocked: planActive || ebook?.paid === true || isFirstEbook,
       lastPayment: payments?.[0] ?? null,
     };
   });
+

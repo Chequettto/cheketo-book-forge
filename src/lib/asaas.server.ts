@@ -22,9 +22,12 @@ async function asaasFetch<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      // O Asaas exige User-Agent em todas as requisições (erro user_agent_not_informed).
+      "User-Agent": "Chequetto/1.0 (+https://cheketo-book-forge.lovable.app)",
       access_token: apiKey(),
       ...(init?.headers ?? {}),
     },
+
   });
   const text = await res.text();
   if (!res.ok) {

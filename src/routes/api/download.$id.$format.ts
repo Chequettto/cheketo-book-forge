@@ -37,9 +37,20 @@ export const Route = createFileRoute("/api/download/$id/$format")({
           (profile?.plan === "monthly" &&
             !!profile.plan_expires_at &&
             new Date(profile.plan_expires_at) > new Date());
-        if (!planActive && !ebook.paid) {
+
+        // Cortesia: o primeiro e-book da conta é liberado sem pagamento.
+        const { data: firstEbook } = await supabaseAdmin
+          .from("ebooks")
+          .select("id")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: true })
+          .limit(1);
+        const isFirstEbook = firstEbook?.[0]?.id === ebook.id;
+
+        if (!planActive && !ebook.paid && !isFirstEbook) {
           return new Response("Payment required", { status: 402 });
         }
+
 
         const { data: chapters } = await supabaseAdmin
           .from("chapters")

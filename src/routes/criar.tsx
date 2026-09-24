@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Header } from "@/components/Brand";
 import { useAuth } from "@/hooks/useAuth";
-import { createEbook, generateChapter, generateCover } from "@/lib/ebooks.functions";
+import { createEbook, generateChapter, generateCover, uploadCover } from "@/lib/ebooks.functions";
 
 export const Route = createFileRoute("/criar")({
   head: () => ({
@@ -29,6 +29,7 @@ function CreatePage() {
   const runCreate = useServerFn(createEbook);
   const runChapter = useServerFn(generateChapter);
   const runCover = useServerFn(generateCover);
+  const runUploadCover = useServerFn(uploadCover);
 
   const [form, setForm] = useState({
     title: "",
@@ -39,17 +40,37 @@ function CreatePage() {
     chaptersCount: 6,
     pagesCount: 40,
   });
+  const [coverMode, setCoverMode] = useState<"ai" | "upload">("ai");
+  const [coverFile, setCoverFile] = useState<{ base64: string; mimeType: string } | null>(null);
+  const [coverPreview, setCoverPreview] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [steps, setSteps] = useState<Step[]>([]);
   const [current, setCurrent] = useState("");
+
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
   }, [loading, session, navigate]);
 
+  function pickCover(file: File | null) {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("A imagem deve ter até 10 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      setCoverFile({ base64: result, mimeType: file.type });
+      setCoverPreview(result);
+    };
+    reader.readAsDataURL(file);
+  }
+
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
 
   async function generate(event: React.FormEvent) {
     event.preventDefault();
@@ -70,11 +91,19 @@ function CreatePage() {
         setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
       }
 
-      setCurrent("Renderizando a capa em alta resolução…");
-      await runCover({ data: { ebookId } });
+      if (coverMode === "upload" && coverFile) {
+        setCurrent("Aplicando a capa enviada…");
+        await runUploadCover({
+          data: { ebookId, base64: coverFile.base64, mimeType: coverFile.mimeType as "image/png" },
+        });
+      } else {
+        setCurrent("Renderizando a capa em alta resolução…");
+        await runCover({ data: { ebookId } });
+      }
 
-      toast.success("E-book gerado. Escolha seu plano para baixar.");
+      toast.success("E-book gerado com sucesso.");
       navigate({ to: "/ebook/$id", params: { id: ebookId } });
+
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha na geração.");
       setRunning(false);
@@ -162,14 +191,66 @@ function CreatePage() {
             />
           </Field>
 
-          <Field label="Descrição da capa">
-            <textarea
-              className="field focus:field-focus min-h-28 resize-y"
-              value={form.coverPrompt}
-              onChange={(e) => update("coverPrompt", e.target.value)}
-              placeholder="Estilo, cores, elementos visuais e clima desejado para a capa."
-            />
-          </Field>
+          <div className="rounded-xl border border-border/60 p-4">
+            <span className="mb-3 block text-sm font-medium text-muted-foreground">Capa</span>
+            <div className="mb-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCoverMode("ai")}
+                className={`rounded-lg border px-4 py-2 text-sm transition-colors ${
+                  coverMode === "ai" ? "border-primary text-primary" : "border-border"
+                }`}
+              >
+                Gerar com IA
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoverMode("upload")}
+                className={`rounded-lg border px-4 py-2 text-sm transition-colors ${
+                  coverMode === "upload" ? "border-primary text-primary" : "border-border"
+                }`}
+              >
+                Enviar minha imagem
+              </button>
+            </div>
+
+            {coverMode === "ai" ? (
+              <textarea
+                className="field focus:field-focus min-h-28 resize-y"
+                value={form.coverPrompt}
+                onChange={(e) => update("coverPrompt", e.target.value)}
+                placeholder="Estilo, cores, elementos visuais e clima desejado para a capa."
+              />
+            ) : (
+              <div className="flex items-center gap-4">
+                <input
+                  id="cover-file"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => pickCover(e.target.files?.[0] ?? null)}
+                />
+                <label
+                  htmlFor="cover-file"
+                  className="cursor-pointer rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-card"
+                >
+                  Escolher imagem
+                </label>
+                {coverPreview ? (
+                  <img
+                    src={coverPreview}
+                    alt="Prévia da capa enviada"
+                    className="h-24 w-16 rounded-md border border-border object-cover"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    PNG, JPG ou WebP, até 10 MB.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
 
           <div className="grid gap-5 md:grid-cols-2">
             <Field label={`Quantidade de capítulos: ${form.chaptersCount}`}>
