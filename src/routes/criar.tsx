@@ -52,9 +52,25 @@ function CreatePage() {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
   }, [loading, session, navigate]);
 
+  function pickCover(file: File | null) {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("A imagem deve ter até 10 MB.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      setCoverFile({ base64: result, mimeType: file.type });
+      setCoverPreview(result);
+    };
+    reader.readAsDataURL(file);
+  }
+
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((prev) => ({ ...prev, [key]: value }));
   }
+
 
   async function generate(event: React.FormEvent) {
     event.preventDefault();
