@@ -264,6 +264,53 @@ Tipografia legível e bem hierarquizada, composição limpa, sem marcas d'água.
     return { path: path as string | null };
   });
 
+/** Usa uma imagem enviada pelo usuário como capa oficial do e-book. */
+export const uploadCover = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z
+      .object({
+        ebookId: z.string().uuid(),
+        mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+        base64: z.string().min(100),
+      })
+      .parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: ebook } = await supabase
+      .from("ebooks")
+      .select("id")
+      .eq("id", data.ebookId)
+      .single();
+    if (!ebook) throw new Error("E-book não encontrado.");
+
+    const binary = Buffer.from(data.base64.replace(/^data:[^,]+,/, ""), "base64");
+    if (binary.byteLength > 10 * 1024 * 1024) throw new Error("A imagem deve ter até 10 MB.");
+
+    const ext = data.mimeType === "image/png" ? "png" : data.mimeType === "image/webp" ? "webp" : "jpg";
+    const path = `${userId}/${data.ebookId}.${ext}`;
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { error: uploadError } = await supabaseAdmin.storage
+      .from("covers")
+      .upload(path, binary, { contentType: data.mimeType, upsert: true });
+    if (uploadError) throw new Error(uploadError.message);
+
+    await supabase
+      .from("ebooks")
+      .update({
+        cover_url: path,
+        status: "ready",
+        progress: 100,
+        progress_label: "E-book pronto",
+        error: null,
+      })
+      .eq("id", data.ebookId);
+
+    return { path };
+  });
+
+
 /** Detalhes completos do e-book, com URL assinada da capa. */
 export const getEbook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
