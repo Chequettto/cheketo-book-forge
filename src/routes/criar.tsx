@@ -162,14 +162,66 @@ function CreatePage() {
             />
           </Field>
 
-          <Field label="Descrição da capa">
-            <textarea
-              className="field focus:field-focus min-h-28 resize-y"
-              value={form.coverPrompt}
-              onChange={(e) => update("coverPrompt", e.target.value)}
-              placeholder="Estilo, cores, elementos visuais e clima desejado para a capa."
-            />
-          </Field>
+          <div className="rounded-xl border border-border/60 p-4">
+            <span className="mb-3 block text-sm font-medium text-muted-foreground">Capa</span>
+            <div className="mb-4 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCoverMode("ai")}
+                className={`rounded-lg border px-4 py-2 text-sm transition-colors ${
+                  coverMode === "ai" ? "border-primary text-primary" : "border-border"
+                }`}
+              >
+                Gerar com IA
+              </button>
+              <button
+                type="button"
+                onClick={() => setCoverMode("upload")}
+                className={`rounded-lg border px-4 py-2 text-sm transition-colors ${
+                  coverMode === "upload" ? "border-primary text-primary" : "border-border"
+                }`}
+              >
+                Enviar minha imagem
+              </button>
+            </div>
+
+            {coverMode === "ai" ? (
+              <textarea
+                className="field focus:field-focus min-h-28 resize-y"
+                value={form.coverPrompt}
+                onChange={(e) => update("coverPrompt", e.target.value)}
+                placeholder="Estilo, cores, elementos visuais e clima desejado para a capa."
+              />
+            ) : (
+              <div className="flex items-center gap-4">
+                <input
+                  id="cover-file"
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => pickCover(e.target.files?.[0] ?? null)}
+                />
+                <label
+                  htmlFor="cover-file"
+                  className="cursor-pointer rounded-lg border border-border px-5 py-2.5 text-sm transition-colors hover:bg-card"
+                >
+                  Escolher imagem
+                </label>
+                {coverPreview ? (
+                  <img
+                    src={coverPreview}
+                    alt="Prévia da capa enviada"
+                    className="h-24 w-16 rounded-md border border-border object-cover"
+                  />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    PNG, JPG ou WebP, até 10 MB.
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
 
           <div className="grid gap-5 md:grid-cols-2">
             <Field label={`Quantidade de capítulos: ${form.chaptersCount}`}>
