@@ -91,11 +91,19 @@ function CreatePage() {
         setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
       }
 
-      setCurrent("Renderizando a capa em alta resolução…");
-      await runCover({ data: { ebookId } });
+      if (coverMode === "upload" && coverFile) {
+        setCurrent("Aplicando a capa enviada…");
+        await runUploadCover({
+          data: { ebookId, base64: coverFile.base64, mimeType: coverFile.mimeType as "image/png" },
+        });
+      } else {
+        setCurrent("Renderizando a capa em alta resolução…");
+        await runCover({ data: { ebookId } });
+      }
 
-      toast.success("E-book gerado. Escolha seu plano para baixar.");
+      toast.success("E-book gerado com sucesso.");
       navigate({ to: "/ebook/$id", params: { id: ebookId } });
+
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha na geração.");
       setRunning(false);
