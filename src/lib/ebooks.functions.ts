@@ -173,41 +173,35 @@ Não escreva título do e-book nem conclusão genérica. Comece direto pelo cont
       .eq("ebook_id", data.ebookId)
       .eq("position", data.position);
 
-    // 2. Auditoria crítica real
-    const audit = await generateText(
-      "Você é um revisor editorial implacável, especialista em não-ficção prática. Sua função é apontar falhas reais e específicas.",
-      `Leia o capítulo abaixo e faça uma auditoria crítica rigorosa.
-Contexto do e-book: ${ebook.title} — ${ebook.niche}
-Capítulo esperado: "${chapter.title}"
+    // 2. Autocrítica + reescrita num único passe (era auditoria + reescrita em
+    // 2 chamadas separadas — juntar num só corte reduz de 3 para 2 chamadas
+    // ao Gemini por capítulo, o que reduz proporcionalmente o risco de bater
+    // no limite de cota das 6 chaves globais no meio da geração).
+    const revisionRaw = await generateText(
+      "Você é um revisor editorial implacável, especialista em não-ficção prática, e reescreve o texto você mesmo depois de apontar as falhas.",
+      `Leia o rascunho abaixo do capítulo "${chapter.title}" do e-book "${ebook.title}" (${ebook.niche}).
 
-Liste objetivamente:
-1) Repetições e redundâncias (cite trechos).
-2) Enrolação e frases vazias (cite trechos).
-3) Onde falta profundidade prática ou exemplos concretos.
-4) Desvios do tema proposto.
-5) Problemas de ritmo, clareza ou nível técnico.
+Primeiro, em até 5 linhas, aponte os problemas reais: repetições, enrolação, falta de exemplos concretos, desvio do tema, ritmo.
+Depois, na mesma resposta, reescreva o capítulo INTEIRO corrigindo esses problemas, aprofundando tecnicamente,
+mantendo aproximadamente ${wordsTarget} palavras e preservando o tema "${chapter.title}".
 
-TEXTO:
-"""${draft}"""`,
-      { stage: "audit", ebookId: data.ebookId },
-    );
-
-    // 3. Correção e lapidação
-    const polished = await generateText(
-      EDITOR_SYSTEM,
-      `Reescreva o capítulo abaixo corrigindo TODOS os problemas apontados na auditoria editorial.
-Elimine repetições e enrolação, aprofunde tecnicamente, torne cada parágrafo útil e mantenha
-aproximadamente ${wordsTarget} palavras. Preserve o tema "${chapter.title}".
-
-AUDITORIA:
-"""${audit}"""
-
-TEXTO ORIGINAL:
+RASCUNHO:
 """${draft}"""
 
-Retorne APENAS o capítulo final revisado, sem comentários sobre a revisão.`,
-      { stage: "polish", ebookId: data.ebookId },
+Retorne EXATAMENTE neste formato, sem nada antes ou depois:
+CRÍTICA:
+<crítica em até 5 linhas>
+---CAPÍTULO FINAL---
+<capítulo final revisado, começando direto pelo conteúdo>`,
+      { stage: "revise", ebookId: data.ebookId },
     );
+
+    const marker = /---CAP[IÍ]TULO FINAL---/i;
+    const [rawCritique, rawFinal] = revisionRaw.split(marker);
+    const audit = (rawCritique ?? "").replace(/^CR[IÍ]TICA:\s*/i, "").trim() || "Revisado sem observações.";
+    // Se o modelo não seguir o formato à risca, usa a resposta inteira como
+    // capítulo em vez de descartar o trabalho já pago/gerado.
+    const polished = (rawFinal ?? revisionRaw).trim();
 
     await supabase
       .from("chapters")

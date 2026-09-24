@@ -46,13 +46,35 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Erro HTTP do Gemini com o status code preservado (em vez de só texto). */
+class GeminiApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "GeminiApiError";
+    this.status = status;
+  }
+}
+
+// Conforme a doc oficial do Gemini (ai.google.dev/gemini-api/docs/troubleshooting):
+// só vale a pena tentar de novo em erros transitórios — 429 (cota/rate limit),
+// 408 (timeout) e 5xx (instabilidade do servidor). Um 400 (parâmetro ou modelo
+// inválido) é um erro na própria requisição: falha igual em qualquer chave,
+// então testar as 6 só demora mais pra dar o mesmo erro.
+const RETRYABLE_STATUS = new Set([429, 408, 500, 502, 503, 504]);
+// 401/403/402 indicam problema COM AQUELA CHAVE (revogada, sem permissão, sem
+// crédito) — não adianta esperar, mas vale tentar a próxima chave, que pode
+// ser válida.
+const KEY_SPECIFIC_STATUS = new Set([401, 402, 403]);
+
 /**
- * Executa `run` iniciando na chave atual da fila e avançando (1 -> 6)
- * a cada erro de requisição, cota ou rate limit.
- * Erros de limite de cota/rate limit (429) recebem uma pequena espera antes
- * da próxima chave, pra dar tempo da cota da chave anterior liberar — martelar
- * as 6 chaves na mesma fração de segundo faz todas caírem juntas quando o
- * problema é cota compartilhada, não a chave em si.
+ * Executa `run` iniciando na chave atual da fila e avançando (1 -> 6) a cada
+ * erro. Erros de cota/instabilidade (429/408/5xx) esperam com backoff
+ * exponencial antes da próxima tentativa — igual ao SDK oficial do Gemini
+ * (delay inicial ~1s, dobra a cada tentativa, teto de ~20s). Erro de chave
+ * (401/403) troca de chave sem espera. Erro de requisição malformada (400,
+ * 404) não faz sentido repetir em outra chave — falha na hora, com uma
+ * mensagem clara, em vez de fingir que é "problema das 6 chaves".
  */
 async function withKeyRotation<T>(
   options: RotateOptions,
@@ -75,11 +97,23 @@ async function withKeyRotation<T>(
       return result;
     } catch (error) {
       lastError = error;
+      const status = error instanceof GeminiApiError ? error.status : undefined;
       const message = error instanceof Error ? error.message : String(error);
       await logKeyEvent(entry.index, "failover", options.stage, message, options.ebookId ?? null);
-      const isRateLimit = /429|quota|rate.?limit/i.test(message);
+
+      if (status !== undefined && !RETRYABLE_STATUS.has(status) && !KEY_SPECIFIC_STATUS.has(status)) {
+        throw new Error(
+          `O Gemini recusou a requisição (erro ${status}) — não é problema de cota nem de chave, ` +
+            `é a requisição em si (modelo, parâmetros ou formato). Testar outra chave não resolveria: ${message}`,
+        );
+      }
+
       if (attempt < keys.length - 1) {
-        await sleep(isRateLimit ? 4000 : 800);
+        if (status === 429 || status === 408 || (status !== undefined && status >= 500)) {
+          await sleep(Math.min(1000 * 2 ** attempt, 20000));
+        } else {
+          await sleep(300);
+        }
       }
       // Próxima chave da sequência assume de forma transparente.
     }
@@ -104,7 +138,7 @@ async function callTextModel(key: string, system: string, prompt: string): Promi
 
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Gemini ${res.status}: ${body.slice(0, 300)}`);
+    throw new GeminiApiError(res.status, `Gemini ${res.status}: ${body.slice(0, 300)}`);
   }
 
   const json = (await res.json()) as {
@@ -193,7 +227,7 @@ function generateCoverImageWithGemini(
 
     if (!res.ok) {
       const body = await res.text();
-      throw new Error(`Gemini Image ${res.status}: ${body.slice(0, 300)}`);
+      throw new GeminiApiError(res.status, `Gemini Image ${res.status}: ${body.slice(0, 300)}`);
     }
 
     const json = (await res.json()) as {
