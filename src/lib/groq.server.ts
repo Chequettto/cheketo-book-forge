@@ -103,6 +103,29 @@ async function callGroq(key: string, system: string, prompt: string): Promise<st
   return text;
 }
 
+/** Retaguarda: usa as 6 chaves do Gemini quando a Groq não está disponível. */
+async function fallbackToGemini(
+  system: string,
+  prompt: string,
+  options: GroqCallOptions,
+  reason: string,
+): Promise<GroqTextResult> {
+  const { generateGeminiText } = await import("./gemini.server");
+  try {
+    const result = await generateGeminiText(system, prompt, {
+      stage: `${options.stage}_fallback_gemini`,
+      ebookId: options.ebookId ?? null,
+    });
+    return { text: result.text, keyIndex: result.keyIndex };
+  } catch (geminiError) {
+    throw new Error(
+      `${reason} | Gemini (retaguarda): ${
+        geminiError instanceof Error ? geminiError.message : String(geminiError)
+      }`,
+    );
+  }
+}
+
 export async function generateGroqText(
   system: string,
   prompt: string,
@@ -110,7 +133,7 @@ export async function generateGroqText(
 ): Promise<GroqTextResult> {
   const keys = getGroqKeys();
   if (keys.length === 0) {
-    throw new Error("Nenhuma chave Groq configurada (GROQ_API_KEY_1 ... GROQ_API_KEY_6).");
+    return fallbackToGemini(system, prompt, options, "Nenhuma chave Groq configurada");
   }
 
   let lastError: unknown = null;
@@ -143,8 +166,12 @@ export async function generateGroqText(
     }
   }
 
-  throw new Error(
-    `As ${keys.length} chaves Groq falharam temporariamente. Tente novamente em instantes. ` +
-      `Último erro: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  return fallbackToGemini(
+    system,
+    prompt,
+    options,
+    `As ${keys.length} chaves Groq falharam. Último erro: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
   );
 }
