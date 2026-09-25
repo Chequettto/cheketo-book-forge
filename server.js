@@ -7,6 +7,7 @@ const cors = require('cors');
 
 const { generateBlock, pools } = require('./aiService');
 const { generateCoverUrl } = require('./coverService');
+const { buildPdf, buildEpub } = require('./bookBuildService');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -97,9 +98,14 @@ app.post('/api/generate-block', async (req, res) => {
     });
   } catch (error) {
     console.error(`Erro ao gerar bloco ${blockNum} de "${chapterTitle}":`, error);
-    return res.status(500).json({
+    const statusCode = error.retryable ? 503 : 500;
+    return res.status(statusCode).json({
       success: false,
-      error: 'Falha ao gerar o bloco após esgotar as estratégias de resiliência.',
+      retryable: Boolean(error.retryable),
+      provider: error.provider || null,
+      error: error.retryable
+        ? 'Sem cota disponível agora nesse provedor. Tente este mesmo bloco novamente em alguns minutos.'
+        : 'Falha ao gerar o bloco.',
       details: error.message,
     });
   }
@@ -127,6 +133,77 @@ app.post('/api/generate-cover', (req, res) => {
     return res.status(500).json({
       success: false,
       error: 'Falha ao gerar a URL da capa.',
+      details: error.message,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/build-book
+// Monta o PDF e o EPUB finais a partir dos capítulos já gerados (texto puro).
+// NÃO chama nenhuma IA aqui — só formata o que já foi gerado, então é rápido
+// e nunca esbarra no limite de 30s do Render. Não exige login.
+// Body esperado:
+// {
+//   "title": "...", "subtitle": "...", "author": "...",
+//   "chapters": [ { "position": 1, "title": "...", "content": "..." }, ... ],
+//   "coverUrl": "https://...">  (opcional — imagem da capa, ex: a do /api/generate-cover)
+// }
+// ---------------------------------------------------------------------------
+app.post('/api/build-book', async (req, res) => {
+  const { title, subtitle, author, chapters, coverUrl } = req.body || {};
+
+  if (!title || !author || !Array.isArray(chapters) || chapters.length === 0) {
+    return res.status(400).json({
+      error: 'Campos obrigatórios ausentes: title, author e chapters (lista não vazia).',
+    });
+  }
+
+  try {
+    let coverBytes = null;
+    let coverMime = null;
+    if (coverUrl) {
+      try {
+        const fetch = require('node-fetch');
+        const imgRes = await fetch(coverUrl);
+        if (imgRes.ok) {
+          const buf = await imgRes.buffer();
+          coverBytes = new Uint8Array(buf);
+          coverMime = imgRes.headers.get('content-type') || 'image/png';
+        }
+      } catch (imgErr) {
+        console.error('Não foi possível baixar a capa, seguindo sem ela:', imgErr.message);
+      }
+    }
+
+    const buildInput = {
+      title,
+      subtitle: subtitle || null,
+      author,
+      chapters: chapters.map((c, i) => ({
+        position: c.position || i + 1,
+        title: c.title || `Capítulo ${i + 1}`,
+        content: c.content || '',
+      })),
+      coverBytes,
+      coverMime,
+    };
+
+    const pdfBytes = await buildPdf(buildInput);
+    const epubBytes = buildEpub(buildInput);
+
+    return res.json({
+      success: true,
+      pdfBase64: Buffer.from(pdfBytes).toString('base64'),
+      epubBase64: Buffer.from(epubBytes).toString('base64'),
+      pdfSizeBytes: pdfBytes.length,
+      epubSizeBytes: epubBytes.length,
+    });
+  } catch (error) {
+    console.error('Erro ao montar o livro:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Falha ao montar o PDF/EPUB.',
       details: error.message,
     });
   }

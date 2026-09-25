@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Testar Gerador de E-book</title>
+<style>
+  :root {
+    --bg: #f7f5f2;
+    --card: #ffffff;
+    --text: #2b2620;
+    --muted: #746b5e;
+    --accent: #b5651d;
+    --accent-dark: #8f4e15;
+    --border: #e4ddd2;
+    --ok: #2e6b3e;
+    --err: #a33a2a;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #221f1a; --card: #2c2820; --text: #efe9df; --muted: #b3a99a;
+      --border: #46402f; --accent: #e0954a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #221f1a; --card: #2c2820; --text: #efe9df; --muted: #b3a99a;
+    --border: #46402f; --accent: #e0954a;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: Georgia, 'Times New Roman', serif;
+    padding: 24px 16px 48px;
+  }
+  .wrap { max-width: 620px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  p.sub { color: var(--muted); margin-top: 0; font-size: 0.95rem; }
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px; margin-bottom: 18px;
+  }
+  label { display: block; font-size: 0.85rem; color: var(--muted); margin: 10px 0 4px; }
+  input, textarea {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: transparent; color: var(--text);
+    font-family: inherit; font-size: 1rem;
+  }
+  textarea { min-height: 60px; resize: vertical; }
+  button {
+    margin-top: 16px; width: 100%; padding: 13px; border: none; border-radius: 8px;
+    background: var(--accent); color: white; font-size: 1.05rem; font-weight: bold;
+    cursor: pointer;
+  }
+  button:active { background: var(--accent-dark); }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .status { font-size: 0.9rem; margin-top: 10px; min-height: 1.2em; }
+  .status.ok { color: var(--ok); }
+  .status.err { color: var(--err); }
+  .result {
+    margin-top: 14px; padding: 14px; border-radius: 8px;
+    background: var(--bg); border: 1px solid var(--border);
+    white-space: pre-wrap; font-size: 0.98rem; line-height: 1.5; display: none;
+    max-width: 100%; overflow-x: auto;
+  }
+  .result img { max-width: 100%; border-radius: 8px; display: block; margin-top: 8px; }
+  .hint { font-size: 0.8rem; color: var(--muted); margin-top: -2px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧪 Testar o Gerador de E-book</h1>
+  <p class="sub">Cole o endereço do seu site no Render uma vez, depois é só clicar nos botões.</p>
+
+  <div class="card">
+    <label for="baseUrl">Endereço do seu site (Render)</label>
+    <input id="baseUrl" placeholder="https://seu-app.onrender.com" />
+    <p class="hint">Termina em .onrender.com — não precisa colocar barra no final.</p>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">1) Testar geração de texto</h3>
+    <label for="niche">Nicho / assunto</label>
+    <input id="niche" value="finanças pessoais" />
+    <label for="audience">Público-alvo</label>
+    <input id="audience" value="jovens que querem sair das dívidas" />
+    <label for="tone">Tom desejado</label>
+    <input id="tone" value="acolhedor e direto" />
+    <button id="btnBlock" onclick="testarBloco()">Gerar bloco de teste</button>
+    <div id="statusBlock" class="status"></div>
+    <div id="resultBlock" class="result"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">2) Testar geração de capa</h3>
+    <label for="coverTitle">Título do e-book</label>
+    <input id="coverTitle" value="Domine suas Finanças" />
+    <button id="btnCover" onclick="testarCapa()">Gerar capa de teste</button>
+    <div id="statusCover" class="status"></div>
+    <div id="resultCover" class="result"></div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top:0;">3) Testar montagem do livro (PDF/EPUB)</h3>
+    <p class="hint">Isso não usa IA — só monta rapidinho um PDF e um EPUB de exemplo, para testar se essa parte funciona sem travar.</p>
+    <button id="btnBook" onclick="testarLivro()">Montar livro de teste</button>
+    <div id="statusBook" class="status"></div>
+    <div id="resultBook" class="result"></div>
+  </div>
+</div>
+
+<script>
+function getBase() {
+  const v = document.getElementById('baseUrl').value.trim().replace(/\/$/, '');
+  try { localStorage.setItem('gerador_base_url', v); } catch (e) {}
+  return v;
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  try {
+    const saved = localStorage.getItem('gerador_base_url');
+    if (saved) document.getElementById('baseUrl').value = saved;
+  } catch (e) {}
+});
+
+async function testarBloco() {
+  const base = getBase();
+  const statusEl = document.getElementById('statusBlock');
+  const resultEl = document.getElementById('resultBlock');
+  const btn = document.getElementById('btnBlock');
+  resultEl.style.display = 'none';
+  if (!base) { statusEl.textContent = 'Cole o endereço do site primeiro.'; statusEl.className = 'status err'; return; }
+
+  btn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.textContent = 'Gerando... isso pode levar até 1 minuto (passa por 3 IAs em sequência).';
+
+  try {
+    const res = await fetch(base + '/api/generate-block', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookTitle: document.getElementById('coverTitle').value || 'Livro de Teste',
+        chapterTitle: 'Capítulo 1: Introdução',
+        blockNumber: 1,
+        niche: document.getElementById('niche').value,
+        targetAudience: document.getElementById('audience').value,
+        tone: document.getElementById('tone').value,
+        recentContext: ''
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || data.details || ('Erro HTTP ' + res.status));
+
+    statusEl.textContent = '✅ Funcionou! Texto gerado (' + data.wordCount + ' palavras):';
+    statusEl.className = 'status ok';
+    resultEl.textContent = data.text;
+    resultEl.style.display = 'block';
+  } catch (err) {
+    statusEl.textContent = '❌ Erro: ' + err.message;
+    statusEl.className = 'status err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function base64ToBlob(base64, mime) {
+  const bytes = atob(base64);
+  const arr = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+async function testarLivro() {
+  const base = getBase();
+  const statusEl = document.getElementById('statusBook');
+  const resultEl = document.getElementById('resultBook');
+  const btn = document.getElementById('btnBook');
+  resultEl.style.display = 'none';
+  if (!base) { statusEl.textContent = 'Cole o endereço do site primeiro.'; statusEl.className = 'status err'; return; }
+
+  btn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.textContent = 'Montando PDF e EPUB de teste...';
+
+  try {
+    const res = await fetch(base + '/api/build-book', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: document.getElementById('coverTitle').value || 'Livro de Teste',
+        subtitle: 'Gerado para teste',
+        author: 'Autor de Teste',
+        chapters: [
+          { position: 1, title: 'Capítulo 1: Introdução', content: 'Este é um texto de exemplo para testar a montagem do PDF e do EPUB, sem usar nenhuma IA nesta etapa.' },
+          { position: 2, title: 'Capítulo 2: Desenvolvimento', content: 'Segundo capítulo de exemplo, só para confirmar que várias páginas funcionam certinho.' }
+        ]
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || data.details || ('Erro HTTP ' + res.status));
+
+    statusEl.textContent = '✅ Montado! PDF: ' + data.pdfSizeBytes + ' bytes | EPUB: ' + data.epubSizeBytes + ' bytes';
+    statusEl.className = 'status ok';
+
+    const pdfBlob = base64ToBlob(data.pdfBase64, 'application/pdf');
+    const epubBlob = base64ToBlob(data.epubBase64, 'application/epub+zip');
+
+    resultEl.innerHTML = '';
+    const linkPdf = document.createElement('a');
+    linkPdf.href = URL.createObjectURL(pdfBlob);
+    linkPdf.download = 'livro-teste.pdf';
+    linkPdf.textContent = '⬇️ Baixar PDF de teste';
+    linkPdf.style.display = 'block';
+    linkPdf.style.marginBottom = '8px';
+    linkPdf.style.color = 'var(--accent)';
+
+    const linkEpub = document.createElement('a');
+    linkEpub.href = URL.createObjectURL(epubBlob);
+    linkEpub.download = 'livro-teste.epub';
+    linkEpub.textContent = '⬇️ Baixar EPUB de teste';
+    linkEpub.style.display = 'block';
+    linkEpub.style.color = 'var(--accent)';
+
+    resultEl.appendChild(linkPdf);
+    resultEl.appendChild(linkEpub);
+    resultEl.style.display = 'block';
+  } catch (err) {
+    statusEl.textContent = '❌ Erro: ' + err.message;
+    statusEl.className = 'status err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function testarCapa() {
+  const base = getBase();
+  const statusEl = document.getElementById('statusCover');
+  const resultEl = document.getElementById('resultCover');
+  const btn = document.getElementById('btnCover');
+  resultEl.style.display = 'none';
+  if (!base) { statusEl.textContent = 'Cole o endereço do site primeiro.'; statusEl.className = 'status err'; return; }
+
+  btn.disabled = true;
+  statusEl.className = 'status';
+  statusEl.textContent = 'Gerando capa...';
+
+  try {
+    const res = await fetch(base + '/api/generate-cover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: document.getElementById('coverTitle').value,
+        niche: document.getElementById('niche').value,
+        stylePreference: ''
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || data.details || ('Erro HTTP ' + res.status));
+
+    statusEl.textContent = '✅ Capa gerada!';
+    statusEl.className = 'status ok';
+    resultEl.innerHTML = '';
+    const img = document.createElement('img');
+    img.src = data.url;
+    resultEl.appendChild(img);
+    resultEl.style.display = 'block';
+  } catch (err) {
+    statusEl.textContent = '❌ Erro: ' + err.message;
+    statusEl.className = 'status err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+</script>
+</body>
+</html>
