@@ -118,12 +118,67 @@ async function fallbackToGemini(
     });
     return { text: result.text, keyIndex: result.keyIndex };
   } catch (geminiError) {
-    throw new Error(
-      `${reason} | Gemini (retaguarda): ${
-        geminiError instanceof Error ? geminiError.message : String(geminiError)
-      }`,
-    );
+    // Última retaguarda: IA da Lovable, para a geração nunca travar.
+    try {
+      const text = await generateLovableText(system, prompt);
+      await logKeyEvent(0, "lovable_fallback", options.stage, null, options.ebookId ?? null);
+      return { text, keyIndex: 0 };
+    } catch (lovableError) {
+      throw new Error(
+        `${reason} | Gemini: ${
+          geminiError instanceof Error ? geminiError.message.slice(0, 200) : String(geminiError)
+        } | Lovable AI: ${lovableError instanceof Error ? lovableError.message : String(lovableError)}`,
+      );
+    }
   }
+}
+
+async function generateLovableText(system: string, prompt: string): Promise<string> {
+  const key = process.env["LOVABLE_API_KEY"];
+  if (!key) throw new Error("LOVABLE_API_KEY ausente");
+  const res = await fetch("https://ai.gateway.lovable.dev/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+      "X-Lovable-AIG-SDK": "fetch",
+    },
+    body: JSON.stringify({
+      model: "openai/gpt-6-astra",
+      instructions: system,
+      input: prompt,
+      reasoning: { effort: "low" },
+      store: false,
+      stream: true,
+    }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let text = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (!payload || payload === "[DONE]") continue;
+      try {
+        const event = JSON.parse(payload) as { type?: string; delta?: string };
+        if (event.type === "response.output_text.delta" && event.delta) text += event.delta;
+      } catch {
+        // frame parcial: ignora
+      }
+    }
+  }
+  if (!text.trim()) throw new Error("resposta vazia");
+  return text.trim();
 }
 
 export async function generateGroqText(
