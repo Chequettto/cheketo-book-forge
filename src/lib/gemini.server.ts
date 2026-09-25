@@ -5,6 +5,7 @@
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 const IMAGE_MODEL = "gemini-3.1-flash-image";
+const TEXT_MODEL = "gemini-3.6-flash";
 const BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 
 export function getGlobalKeys(): { index: number; key: string }[] {
@@ -89,6 +90,64 @@ function base64ToBytes(data: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
+}
+
+/**
+ * Geração de texto pelo Gemini com rotação das 6 chaves globais.
+ * Usada apenas como retaguarda quando a Groq não está disponível.
+ */
+export async function generateGeminiText(
+  system: string,
+  prompt: string,
+  options: RotateOptions,
+): Promise<{ text: string; keyIndex: number }> {
+  const keys = getGlobalKeys();
+  if (keys.length === 0) {
+    throw new Error("Nenhuma chave global do Gemini configurada.");
+  }
+
+  let lastError: unknown = null;
+  for (const entry of keys) {
+    try {
+      const res = await fetch(
+        `${BASE}/${TEXT_MODEL}:generateContent?key=${encodeURIComponent(entry.key)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: system }] },
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.78, maxOutputTokens: 4096 },
+          }),
+        },
+      );
+      if (!res.ok) {
+        const body = await res.text();
+        throw new GeminiApiError(res.status, `Gemini ${res.status}: ${body.slice(0, 300)}`);
+      }
+      const json = (await res.json()) as {
+        candidates?: { content?: { parts?: { text?: string }[] } }[];
+      };
+      const text = (json.candidates?.[0]?.content?.parts ?? [])
+        .map((part) => part.text ?? "")
+        .join("")
+        .trim();
+      if (!text) throw new Error("O Gemini retornou uma resposta vazia.");
+      await logKeyEvent(entry.index, "success", options.stage, null, options.ebookId ?? null);
+      return { text, keyIndex: entry.index };
+    } catch (error) {
+      lastError = error;
+      const message = error instanceof Error ? error.message : String(error);
+      await logKeyEvent(entry.index, "failover", options.stage, message, options.ebookId ?? null);
+      await sleep(300);
+    }
+  }
+
+  throw new Error(
+    `Todas as ${keys.length} chaves do Gemini falharam. Último erro: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
 }
 
 /**
