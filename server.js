@@ -5,7 +5,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 
-const { generateBlock, pools } = require('./aiService');
+const { generateBlock, generateOutline, pools } = require('./aiService');
 const { generateCoverUrl } = require('./coverService');
 const { buildPdf, buildEpub } = require('./bookBuildService');
 
@@ -54,7 +54,7 @@ app.get('/api/health', (req, res) => {
 // para nunca ultrapassar o timeout de 30s do Render.
 // ---------------------------------------------------------------------------
 app.post('/api/generate-block', async (req, res) => {
-  const { bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext } = req.body || {};
+  const { bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext, bookDescription, blocksPerChapter, language } = req.body || {};
 
   const missing = [];
   if (!bookTitle) missing.push('bookTitle');
@@ -72,9 +72,10 @@ app.post('/api/generate-block', async (req, res) => {
   }
 
   const blockNum = Number(blockNumber);
-  if (!Number.isInteger(blockNum) || blockNum < 1 || blockNum > 8) {
+  const maxBlocks = Number(blocksPerChapter) || 8;
+  if (!Number.isInteger(blockNum) || blockNum < 1 || blockNum > 30) {
     return res.status(400).json({
-      error: 'blockNumber deve ser um número inteiro entre 1 e 8.',
+      error: 'blockNumber deve ser um número inteiro entre 1 e 30.',
     });
   }
 
@@ -87,6 +88,9 @@ app.post('/api/generate-block', async (req, res) => {
       targetAudience,
       tone,
       recentContext: recentContext || '',
+      bookDescription: bookDescription || '',
+      blocksPerChapter: maxBlocks,
+      language: language || 'português do Brasil',
     });
 
     return res.json({
@@ -106,6 +110,52 @@ app.post('/api/generate-block', async (req, res) => {
       error: error.retryable
         ? 'Sem cota disponível agora nesse provedor. Tente este mesmo bloco novamente em alguns minutos.'
         : 'Falha ao gerar o bloco.',
+      details: error.message,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/generate-outline
+// A IA decide sozinha o subtítulo, a descrição e os títulos dos capítulos —
+// a pessoa só informa o título, o nicho, o público e quantos capítulos quer.
+// ---------------------------------------------------------------------------
+app.post('/api/generate-outline', async (req, res) => {
+  const { bookTitle, niche, targetAudience, tone, numChapters, language } = req.body || {};
+
+  const missing = [];
+  if (!bookTitle) missing.push('bookTitle');
+  if (!niche) missing.push('niche');
+  if (!targetAudience) missing.push('targetAudience');
+  if (!tone) missing.push('tone');
+  if (!numChapters) missing.push('numChapters');
+
+  if (missing.length > 0) {
+    return res.status(400).json({ error: 'Campos obrigatórios ausentes no body.', missingFields: missing });
+  }
+
+  const n = Number(numChapters);
+  if (!Number.isInteger(n) || n < 1 || n > 30) {
+    return res.status(400).json({ error: 'numChapters deve ser um número inteiro entre 1 e 30.' });
+  }
+
+  try {
+    const outline = await generateOutline({
+      bookTitle,
+      niche,
+      targetAudience,
+      tone,
+      numChapters: n,
+      language: language || 'português do Brasil',
+    });
+    return res.json({ success: true, ...outline });
+  } catch (error) {
+    console.error('Erro ao gerar esboço:', error);
+    const statusCode = error.retryable ? 503 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      retryable: Boolean(error.retryable),
+      error: 'Falha ao gerar o esboço automático.',
       details: error.message,
     });
   }

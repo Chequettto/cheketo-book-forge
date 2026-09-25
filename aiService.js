@@ -5,22 +5,26 @@
  * ---------------------------------------------------------------------------
  * Esteira tripla sequencial para geração de blocos de e-book:
  *
- *   ETAPA 1 (Gemini 1.5 Flash)   -> "O Arquiteto Denso"
- *   ETAPA 2 (Groq / Llama 3.3)   -> "O Refinador de Cadência"
- *   ETAPA 3 (Mistral Small)      -> "O Humanizador Executivo"
+ *   ETAPA 1 -> "O Arquiteto Denso"        (preferência: Gemini, depois Groq, depois Mistral)
+ *   ETAPA 2 -> "O Refinador de Cadência"  (preferência: Groq, depois Mistral, depois Gemini)
+ *   ETAPA 3 -> "O Humanizador Executivo"  (preferência: Mistral, depois Gemini, depois Groq)
  *
- * Cada etapa usa um pool rotativo de 6 chaves (18 no total). Se uma chave
- * falha (429/500/timeout), tenta a próxima chave do mesmo pool. Se as 6
- * chaves do provedor falharem na mesma rodada, o serviço faz uma PAUSA
- * TÉCNICA de 10s e tenta a rodada inteira novamente, indefinidamente, até
- * obter sucesso — nunca descarta o progresso do bloco.
+ * As 18 chaves (6 Gemini + 6 Groq + 6 Mistral) funcionam como UM ÚNICO ANEL
+ * de resiliência: se as 6 chaves do provedor preferido de uma etapa falharem
+ * (cota esgotada, 429, 500, timeout), o sistema passa a usar as chaves dos
+ * outros dois provedores para realizar aquele mesmo trabalho, em vez de
+ * ficar parado esperando só um provedor voltar. Só se as 18 chaves falharem
+ * na mesma rodada é que o serviço faz uma PAUSA TÉCNICA de 10s e tenta tudo
+ * de novo, por até 3 rodadas — depois disso, desiste do bloco de forma
+ * controlada (avisando "tente mais tarde") em vez de travar para sempre.
  * ---------------------------------------------------------------------------
  */
 
 const fetch = require('node-fetch');
 
 const REQUEST_TIMEOUT_MS = 15_000; // timeout individual por chamada (AbortController)
-const TECHNICAL_PAUSE_MS = 10_000; // pausa técnica quando um pool inteiro falha
+const TECHNICAL_PAUSE_MS = 10_000; // pausa técnica quando as 18 chaves falham numa rodada
+const MAX_GLOBAL_ROUNDS = 3; // rodadas completas pelas 18 chaves antes de desistir deste bloco
 
 // -----------------------------------------------------------------------
 // Clichês de IA a eliminar na Etapa 3 (usados no prompt do Humanizador)
@@ -202,64 +206,72 @@ const CALLERS = {
 };
 
 // -----------------------------------------------------------------------
-// Motor de resiliência: percorre as 6 chaves do pool; se todas falharem,
-// pausa técnica de 10s e recomeça a rodada — indefinidamente.
+// Motor de resiliência TOTAL: para cada etapa, tenta primeiro o provedor
+// preferido (percorrendo suas 6 chaves) e, se todas falharem, passa para o
+// PRÓXIMO PROVEDOR (as outras 6 chaves), e depois o terceiro — usando as
+// 18 chaves como um único anel, não 3 anéis isolados. Só se as 18 chaves
+// falharem na mesma rodada é que o sistema faz uma pausa técnica de 10s e
+// tenta tudo de novo. Depois de MAX_GLOBAL_ROUNDS rodadas sem sucesso,
+// desiste deste bloco de forma controlada (nunca trava para sempre).
 // -----------------------------------------------------------------------
-async function callWithResilience(provider, prompt, stageLabel) {
-  const pool = pools[provider];
-  if (!pool || pool.length === 0) {
-    throw new Error(
-      `Nenhuma chave configurada para o provedor "${provider}". Verifique as variáveis de ambiente ${provider.toUpperCase()}_KEY_1..6.`
-    );
-  }
+async function callWithFullResilience(providerOrder, prompt, roleLabel) {
+  let lastError = null;
 
-  const caller = CALLERS[provider];
-  let round = 1;
+  for (let round = 1; round <= MAX_GLOBAL_ROUNDS; round += 1) {
+    for (const provider of providerOrder) {
+      const pool = pools[provider];
+      const caller = CALLERS[provider];
+      if (!pool || pool.length === 0) continue; // provedor sem chaves configuradas, pula
 
-  // Loop externo: rodadas. Cada rodada percorre todas as chaves do pool.
-  // eslint-disable-next-line no-constant-condition
-  while (true) {
-    const startIndex = nextStartIndex(provider);
-    let lastError = null;
-
-    for (let offset = 0; offset < pool.length; offset += 1) {
-      const keyIndex = (startIndex + offset) % pool.length;
-      const apiKey = pool[keyIndex];
-      try {
-        log(stageLabel, `Tentando chave #${keyIndex + 1}/${pool.length} (rodada ${round})`);
-        const result = await caller(apiKey, prompt);
-        log(stageLabel, `Sucesso com a chave #${keyIndex + 1} na rodada ${round}.`);
-        return result;
-      } catch (error) {
-        lastError = error;
-        log(
-          stageLabel,
-          `Falha na chave #${keyIndex + 1}: ${error.message}. Alternando para a próxima chave do pool.`
-        );
+      const startIndex = nextStartIndex(provider);
+      for (let offset = 0; offset < pool.length; offset += 1) {
+        const keyIndex = (startIndex + offset) % pool.length;
+        const apiKey = pool[keyIndex];
+        try {
+          log(roleLabel, `Tentando ${provider} chave #${keyIndex + 1}/${pool.length} (rodada ${round}/${MAX_GLOBAL_ROUNDS})`);
+          const result = await caller(apiKey, prompt);
+          log(roleLabel, `Sucesso com ${provider} chave #${keyIndex + 1} na rodada ${round}.`);
+          return result;
+        } catch (error) {
+          lastError = error;
+          log(roleLabel, `Falha em ${provider} chave #${keyIndex + 1}: ${error.message}.`);
+        }
       }
+      log(roleLabel, `Todas as chaves de ${provider} falharam. Passando para o próximo provedor disponível.`);
     }
 
-    // Todas as chaves do pool falharam nesta rodada.
+    if (round >= MAX_GLOBAL_ROUNDS) break;
+
+    // As 18 chaves falharam nesta rodada.
     log(
-      stageLabel,
-      `Todas as ${pool.length} chaves de ${provider} falharam na rodada ${round} (último erro: ${
+      roleLabel,
+      `As 18 chaves falharam na rodada ${round} (último erro: ${
         lastError ? lastError.message : 'desconhecido'
-      }). Pausa técnica de ${TECHNICAL_PAUSE_MS / 1000}s antes de tentar novamente. O bloco NÃO será descartado.`
+      }). Pausa técnica de ${TECHNICAL_PAUSE_MS / 1000}s antes de tentar novamente.`
     );
     await sleep(TECHNICAL_PAUSE_MS);
-    round += 1;
   }
+
+  // Esgotou as rodadas com as 18 chaves: desiste deste bloco de forma controlada.
+  const finalError = new Error(
+    `As 18 chaves (Gemini + Groq + Mistral) falharam após ${MAX_GLOBAL_ROUNDS} rodadas para a etapa "${roleLabel}". ` +
+      `Último erro: ${lastError ? lastError.message : 'desconhecido'}. ` +
+      `Tente novamente este mesmo bloco mais tarde — os blocos já gerados com sucesso não são perdidos.`
+  );
+  finalError.retryable = true;
+  throw finalError;
 }
 
 // -----------------------------------------------------------------------
 // Construtores de prompt dinâmicos por etapa, adaptados a niche/tone/audience
 // -----------------------------------------------------------------------
 
-function buildArchitectPrompt({ bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext }) {
-  return `Você é um autor especialista em "${niche}", escrevendo um e-book profissional chamado "${bookTitle}".
-
+function buildArchitectPrompt({ bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext, bookDescription, blocksPerChapter, language }) {
+  const lang = language || 'português do Brasil';
+  return `Você é um autor especialista em "${niche}", escrevendo um e-book profissional chamado "${bookTitle}", em ${lang}.
+${bookDescription ? `\nSOBRE O LIVRO: ${bookDescription}\n` : ''}
 CAPÍTULO ATUAL: "${chapterTitle}"
-BLOCO: ${blockNumber} de 8 (aproximadamente 350 a 400 palavras neste bloco)
+BLOCO: ${blockNumber} de ${blocksPerChapter || 8} (aproximadamente 350 a 400 palavras neste bloco)
 PÚBLICO-ALVO: ${targetAudience}
 TOM DESEJADO: ${tone}
 
@@ -304,7 +316,7 @@ Faça o polimento final de voz humana neste texto:
 // Orquestrador principal: roda as 3 etapas em sequência para 1 bloco
 // -----------------------------------------------------------------------
 async function generateBlock(params) {
-  const { bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext } = params;
+  const { bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext, bookDescription, blocksPerChapter, language } = params;
 
   // ETAPA 1 — Gemini 1.5 Flash ("O Arquiteto Denso")
   const architectPrompt = buildArchitectPrompt({
@@ -315,8 +327,15 @@ async function generateBlock(params) {
     targetAudience,
     tone,
     recentContext,
+    bookDescription,
+    blocksPerChapter,
+    language,
   });
-  const draftText = await callWithResilience('gemini', architectPrompt, 'ETAPA 1 - Arquiteto Denso (Gemini)');
+  const draftText = await callWithFullResilience(
+    ['gemini', 'groq', 'mistral'],
+    architectPrompt,
+    'ETAPA 1 - Arquiteto Denso'
+  );
 
   // ETAPA 2 — Groq / Llama 3.3 70B ("O Refinador de Cadência")
   const cadencePrompt = buildCadenceRefinerPrompt({
@@ -327,7 +346,11 @@ async function generateBlock(params) {
     tone,
     draftText,
   });
-  const refinedText = await callWithResilience('groq', cadencePrompt, 'ETAPA 2 - Refinador de Cadência (Groq)');
+  const refinedText = await callWithFullResilience(
+    ['groq', 'mistral', 'gemini'],
+    cadencePrompt,
+    'ETAPA 2 - Refinador de Cadência'
+  );
 
   // ETAPA 3 — Mistral Small ("O Humanizador Executivo")
   const humanizerPrompt = buildHumanizerPrompt({
@@ -337,7 +360,11 @@ async function generateBlock(params) {
     targetAudience,
     refinedText,
   });
-  const finalText = await callWithResilience('mistral', humanizerPrompt, 'ETAPA 3 - Humanizador Executivo (Mistral)');
+  const finalText = await callWithFullResilience(
+    ['mistral', 'gemini', 'groq'],
+    humanizerPrompt,
+    'ETAPA 3 - Humanizador Executivo'
+  );
 
   return {
     blockNumber,
@@ -346,8 +373,58 @@ async function generateBlock(params) {
   };
 }
 
+// -----------------------------------------------------------------------
+// Esboço automático: a IA decide subtítulo + títulos dos capítulos,
+// para a pessoa não precisar digitar nada disso.
+// -----------------------------------------------------------------------
+async function generateOutline({ bookTitle, niche, targetAudience, tone, numChapters, language }) {
+  const lang = language || 'português do Brasil';
+  const prompt = `Você é um editor-chefe especialista em "${niche}". Vai planejar a estrutura de um e-book chamado "${bookTitle}", escrito em ${lang}, para o público "${targetAudience}", com tom "${tone}".
+
+TAREFA: Responda APENAS com um JSON válido (sem markdown, sem \`\`\`, sem texto antes ou depois), no formato exato:
+{
+  "subtitle": "um subtítulo curto e atrativo para o livro",
+  "description": "um resumo de 2 a 3 frases sobre do que trata o livro e o que o leitor vai aprender",
+  "chapters": ["Título do Capítulo 1", "Título do Capítulo 2", ...]
+}
+
+A lista "chapters" deve ter EXATAMENTE ${numChapters} títulos, em ordem lógica de progressão (do básico ao avançado, ou de um problema até a solução completa), específicos para o nicho "${niche}" — nunca genéricos como "Capítulo 1", "Introdução" sozinha, etc.`;
+
+  const raw = await callWithFullResilience(['gemini', 'groq', 'mistral'], prompt, 'ESBOÇO - Sumário Automático');
+
+  const cleaned = raw
+    .trim()
+    .replace(/^```json\s*/i, '')
+    .replace(/^```\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    const match = cleaned.match(/\{[\s\S]*\}/);
+    if (match) {
+      parsed = JSON.parse(match[0]);
+    } else {
+      throw new Error('A IA não devolveu um esboço em formato válido. Tente novamente.');
+    }
+  }
+
+  if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
+    throw new Error('O esboço veio sem lista de capítulos. Tente novamente.');
+  }
+
+  return {
+    subtitle: parsed.subtitle || '',
+    description: parsed.description || '',
+    chapters: parsed.chapters.slice(0, numChapters),
+  };
+}
+
 module.exports = {
   generateBlock,
-  callWithResilience,
+  generateOutline,
+  callWithFullResilience,
   pools,
 };
