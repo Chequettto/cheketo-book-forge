@@ -39,8 +39,8 @@ async function auditAndPolish(
     );
     const match = result.text.match(/CRITICA:\s*([\s\S]*?)\n\s*TEXTO:\s*([\s\S]+)/i);
     if (!match) return null;
-    const critique = match[1].trim();
-    const text = match[2].trim();
+    const critique = (match[1] ?? "").trim();
+    const text = (match[2] ?? "").trim();
     if (text.split(/\s+/).length < 120) return null;
     return { text, critique, source: providerLabel(result) };
   } catch {
