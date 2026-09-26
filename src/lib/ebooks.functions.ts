@@ -170,7 +170,7 @@ export const generateChapter = createServerFn({ method: "POST" })
 
     const { data: chapters } = await supabase
       .from("chapters")
-      .select("position, title, content")
+      .select("position, title, content, audit_report")
       .eq("ebook_id", data.ebookId)
       .order("position");
     const chapter = chapters?.find((item) => item.position === data.position);

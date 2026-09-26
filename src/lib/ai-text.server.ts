@@ -34,7 +34,7 @@ export type AiTextResult = {
 };
 
 const KEY_COUNT = 6;
-const REQUEST_TIMEOUT_MS = 25_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 const COOLDOWN_MS = 45_000;
 const TECHNICAL_PAUSE_MS = 6_000;
 const MAX_ROUNDS = 3;
