@@ -41,7 +41,9 @@ async function auditAndPolish(
     if (!match) return null;
     const critique = (match[1] ?? "").trim();
     const text = (match[2] ?? "").trim();
-    if (text.split(/\s+/).length < 120) return null;
+    // Só aceita a versão lapidada se ela não tiver encolhido demais.
+    const rawWords = raw.split(/\s+/).filter(Boolean).length;
+    if (text.split(/\s+/).filter(Boolean).length < rawWords * 0.6) return null;
     return { text, critique, source: providerLabel(result) };
   } catch {
     // A auditoria nunca pode travar a produção: mantém o rascunho se falhar.
