@@ -44,8 +44,8 @@ export const createEbook = createServerFn({ method: "POST" })
       .single();
     if (error || !ebook) throw new Error(error?.message ?? "Falha ao criar o e-book.");
 
-    const { generateGroqText } = await import("./groq.server");
-    const result = await generateGroqText(
+    const { generateAiText, providerLabel } = await import("./ai-text.server");
+    const result = await generateAiText(
       EDITOR_SYSTEM,
       `Crie o sumário de um e-book.
 Título: ${data.title}
@@ -56,7 +56,7 @@ Meta de volume: ${data.pagesCount} páginas no total.
 
 Retorne EXATAMENTE ${data.chaptersCount} títulos de capítulos, um por linha, numerados no formato "1. Título".
 Cada título deve ser específico e progressivo (sem repetir ideias). Não escreva mais nada.`,
-      { stage: "outline", ebookId: ebook.id },
+      { stage: "outline", ebookId: ebook.id, maxTokens: 900 },
     );
     const raw = result.text;
 
