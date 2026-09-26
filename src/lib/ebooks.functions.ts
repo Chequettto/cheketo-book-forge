@@ -56,7 +56,7 @@ Meta de volume: ${data.pagesCount} páginas no total.
 
 Retorne EXATAMENTE ${data.chaptersCount} títulos de capítulos, um por linha, numerados no formato "1. Título".
 Cada título deve ser específico e progressivo (sem repetir ideias). Não escreva mais nada.`,
-      { stage: "outline", ebookId: ebook.id, maxTokens: 900 },
+      { stage: "outline", ebookId: ebook.id, maxTokens: 2500 },
     );
     const raw = result.text;
 
@@ -181,7 +181,7 @@ ${previousTail ? `Últimas 120 palavras do bloco anterior, para manter a continu
 
 ${isLastBlock ? `Este é o último bloco do capítulo: feche o raciocínio em no máximo ${Math.min(BLOCK_WORDS + 80, remainingWords)} palavras.\n` : ""}
 Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]] ao final da resposta.`,
-      { stage: "chapter_block", ebookId: data.ebookId, maxTokens: 900 },
+      { stage: "chapter_block", ebookId: data.ebookId, maxTokens: 3000 },
     );
 
     const completedByMarker = /\[\[CAPITULO_CONCLUIDO\]\]/i.test(result.text);

@@ -263,7 +263,7 @@ export async function generateAiText(
 ): Promise<AiTextResult> {
   const order = options.order ?? DEFAULT_ORDER;
   const opts = {
-    maxTokens: options.maxTokens ?? 1400,
+    maxTokens: options.maxTokens ?? 2500,
     temperature: options.temperature ?? 0.8,
   };
   const ebookId = options.ebookId ?? null;
