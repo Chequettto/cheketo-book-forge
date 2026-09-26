@@ -130,12 +130,17 @@ function CreatePage() {
     setRunning(true);
     setSteps([]);
     setResumable(null);
-    let created: { ebookId: string; titles: string[]; keyIndex: number } | null = null;
+    let created: {
+      ebookId: string;
+      titles: string[];
+      source: string;
+      blocksPerChapter: number;
+    } | null = null;
     try {
-      setCurrent("Gerando Sumário do E-book (Groq)...");
+      setCurrent("Montando o sumário do e-book…");
       created = await runCreate({ data: form });
-      setCurrent(`Gerando Sumário do E-book (Groq Chave ${created.keyIndex}/6)...`);
-      await runPipeline(created.ebookId, created.titles);
+      setCurrent(`Sumário pronto (${created.source})`);
+      await runPipeline(created.ebookId, created.titles, created.blocksPerChapter);
     } catch (error) {
       if (created) setResumable(created);
       toast.error(error instanceof Error ? error.message : "Falha na geração.");
@@ -148,7 +153,7 @@ function CreatePage() {
     if (!resumable) return;
     setRunning(true);
     try {
-      await runPipeline(resumable.ebookId, resumable.titles);
+      await runPipeline(resumable.ebookId, resumable.titles, resumable.blocksPerChapter);
       setResumable(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao retomar a geração.");
