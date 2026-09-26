@@ -3,20 +3,21 @@
 /**
  * aiService.js
  * ---------------------------------------------------------------------------
- * Esteira tripla sequencial para geração de blocos de e-book:
+ * Esteira DUPLA sequencial para geração de blocos de e-book (reduzida de 3
+ * para 2 chamadas de IA por bloco, para render ~33% mais textos por dia
+ * dentro das cotas grátis):
  *
- *   ETAPA 1 -> "O Arquiteto Denso"        (preferência: Gemini, depois Groq, depois Mistral)
- *   ETAPA 2 -> "O Refinador de Cadência"  (preferência: Groq, depois Mistral, depois Gemini)
- *   ETAPA 3 -> "O Humanizador Executivo"  (preferência: Mistral, depois Gemini, depois Groq)
+ *   ETAPA 1 -> "O Arquiteto Denso"                    (preferência: Gemini, depois Groq, depois Mistral)
+ *   ETAPA 2 -> "Refino de Cadência + Humanização"      (preferência: Groq, depois Mistral, depois Gemini)
  *
- * As 18 chaves (6 Gemini + 6 Groq + 6 Mistral) funcionam como UM ÚNICO ANEL
- * de resiliência: se as 6 chaves do provedor preferido de uma etapa falharem
- * (cota esgotada, 429, 500, timeout), o sistema passa a usar as chaves dos
- * outros dois provedores para realizar aquele mesmo trabalho, em vez de
- * ficar parado esperando só um provedor voltar. Só se as 18 chaves falharem
- * na mesma rodada é que o serviço faz uma PAUSA TÉCNICA de 10s e tenta tudo
- * de novo, por até 3 rodadas — depois disso, desiste do bloco de forma
- * controlada (avisando "tente mais tarde") em vez de travar para sempre.
+ * As 18 chaves (6 Gemini + 6 Groq + 6 Mistral, de 18 contas diferentes) são
+ * UM ÚNICO ANEL de resiliência: se as 6 chaves do provedor preferido de uma
+ * etapa falharem (cota esgotada, 429, 500, timeout), o sistema passa a usar
+ * as chaves dos outros dois provedores para realizar aquele mesmo trabalho.
+ * Só se as 18 chaves falharem na mesma rodada é que o serviço faz uma PAUSA
+ * TÉCNICA de 10s e tenta tudo de novo, por até 3 rodadas — depois disso,
+ * desiste do bloco de forma controlada (avisando "tente mais tarde") em vez
+ * de travar para sempre.
  * ---------------------------------------------------------------------------
  */
 
@@ -284,41 +285,30 @@ TAREFA:
 Escreva o conteúdo bruto e denso deste bloco, com profundidade real de conteúdo (não superficial), trazendo exemplos, raciocínios e informação de valor prático sobre "${niche}" para o público "${targetAudience}". Mantenha continuidade natural com o contexto anterior, sem repetir o que já foi dito. Não escreva título do capítulo nem numeração de bloco — apenas o texto corrido. Extensão alvo: 350 a 400 palavras.`;
 }
 
-function buildCadenceRefinerPrompt({ bookTitle, chapterTitle, niche, targetAudience, tone, draftText }) {
-  return `Você é um editor especialista em ritmo e cadência narrativa. Recebeu um rascunho denso para o e-book "${bookTitle}", capítulo "${chapterTitle}" (nicho: ${niche}; público: ${targetAudience}; tom: ${tone}).
+function buildRefineAndHumanizePrompt({ bookTitle, chapterTitle, niche, targetAudience, tone, draftText }) {
+  return `Você é um editor executivo especialista em ritmo narrativo E em dar voz humana e autêntica a textos, removendo qualquer traço de escrita robótica de IA. Recebeu um rascunho denso para o e-book "${bookTitle}", capítulo "${chapterTitle}" (nicho: ${niche}; público: ${targetAudience}; tom: ${tone}).
 
 RASCUNHO BRUTO:
 """
 ${draftText}
 """
 
-TAREFA:
-Reescreva este texto reestruturando a métrica, o ritmo e a fluidez narrativa. Alterne frases curtas e diretas com frases explicativas mais longas, para criar uma cadência de leitura natural e envolvente, como um autor humano experiente escreveria. Preserve TODO o conteúdo, os exemplos e as ideias do rascunho original — não corte informação, apenas melhore a forma como ela flui. Não adicione título nem comentários, apenas o texto reescrito.`;
-}
+TAREFA (faça as duas coisas no mesmo texto, numa única reescrita):
+1. REESTRUTURE a métrica, o ritmo e a fluidez narrativa: alterne frases curtas e diretas com frases explicativas mais longas, criando uma cadência de leitura natural e envolvente, como um autor humano experiente escreveria.
+2. ELIMINE COMPLETAMENTE clichês típicos de IA, incluindo (mas não se limitando a): ${AI_CLICHES.map((c) => `"${c}"`).join(', ')}. Substitua por transições e conectores naturais, variados, próprios de um autor humano especialista escrevendo no tom "${tone}".
 
-function buildHumanizerPrompt({ bookTitle, niche, tone, targetAudience, refinedText }) {
-  return `Você é um editor executivo especialista em dar voz humana e autêntica a textos, removendo qualquer traço de escrita robótica de IA. Este texto faz parte do e-book "${bookTitle}" (nicho: ${niche}; público: ${targetAudience}; tom: ${tone}).
-
-TEXTO REFINADO:
-"""
-${refinedText}
-"""
-
-TAREFA:
-Faça o polimento final de voz humana neste texto:
-1. ELIMINE COMPLETAMENTE clichês típicos de IA, incluindo (mas não se limitando a): ${AI_CLICHES.map((c) => `"${c}"`).join(', ')}.
-2. Substitua essas expressões por transições e conectores naturais, variados e próprios de um autor humano especialista escrevendo no tom "${tone}".
-3. Preserve 100% do conteúdo e do sentido do texto original — não corte informação.
-4. Não adicione título, comentários ou explicações sobre o que você fez — devolva apenas o texto final, pronto para publicação.`;
+Preserve 100% do conteúdo, exemplos e ideias do rascunho original — não corte informação. Não adicione título, comentários ou explicações sobre o que você fez — devolva apenas o texto final, pronto para publicação.`;
 }
 
 // -----------------------------------------------------------------------
-// Orquestrador principal: roda as 3 etapas em sequência para 1 bloco
+// Orquestrador principal: roda 2 etapas em sequência para 1 bloco
+// (rascunho denso -> refino de cadência + humanização juntos, numa só
+// chamada, para render bem mais textos por dia nas cotas grátis).
 // -----------------------------------------------------------------------
 async function generateBlock(params) {
   const { bookTitle, chapterTitle, blockNumber, niche, targetAudience, tone, recentContext, bookDescription, blocksPerChapter, language } = params;
 
-  // ETAPA 1 — Gemini 1.5 Flash ("O Arquiteto Denso")
+  // ETAPA 1 — "O Arquiteto Denso" (rascunho bruto e denso)
   const architectPrompt = buildArchitectPrompt({
     bookTitle,
     chapterTitle,
@@ -337,8 +327,8 @@ async function generateBlock(params) {
     'ETAPA 1 - Arquiteto Denso'
   );
 
-  // ETAPA 2 — Groq / Llama 3.3 70B ("O Refinador de Cadência")
-  const cadencePrompt = buildCadenceRefinerPrompt({
+  // ETAPA 2 — "Refino de Cadência + Humanização Executiva" (uma só chamada)
+  const refineAndHumanizePrompt = buildRefineAndHumanizePrompt({
     bookTitle,
     chapterTitle,
     niche,
@@ -346,24 +336,10 @@ async function generateBlock(params) {
     tone,
     draftText,
   });
-  const refinedText = await callWithFullResilience(
-    ['groq', 'mistral', 'gemini'],
-    cadencePrompt,
-    'ETAPA 2 - Refinador de Cadência'
-  );
-
-  // ETAPA 3 — Mistral Small ("O Humanizador Executivo")
-  const humanizerPrompt = buildHumanizerPrompt({
-    bookTitle,
-    niche,
-    tone,
-    targetAudience,
-    refinedText,
-  });
   const finalText = await callWithFullResilience(
-    ['mistral', 'gemini', 'groq'],
-    humanizerPrompt,
-    'ETAPA 3 - Humanizador Executivo'
+    ['groq', 'mistral', 'gemini'],
+    refineAndHumanizePrompt,
+    'ETAPA 2 - Refino + Humanização'
   );
 
   return {
@@ -399,20 +375,34 @@ A lista "chapters" deve ter EXATAMENTE ${numChapters} títulos, em ordem lógica
     .replace(/```\s*$/i, '')
     .trim();
 
-  let parsed;
+  let parsed = null;
   try {
     parsed = JSON.parse(cleaned);
   } catch (e) {
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (match) {
-      parsed = JSON.parse(match[0]);
-    } else {
-      throw new Error('A IA não devolveu um esboço em formato válido. Tente novamente.');
+      try {
+        parsed = JSON.parse(match[0]);
+      } catch (e2) {
+        parsed = null;
+      }
     }
   }
 
-  if (!Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
-    throw new Error('O esboço veio sem lista de capítulos. Tente novamente.');
+  // Anti-falha: se mesmo assim não vier um JSON válido com capítulos, gera um
+  // esboço simples localmente (sem IA), para o livro inteiro nunca travar só
+  // por causa desta etapa de sumário.
+  if (!parsed || !Array.isArray(parsed.chapters) || parsed.chapters.length === 0) {
+    log('ESBOÇO - Sumário Automático', 'Resposta da IA não veio em JSON válido. Usando esboço de reserva gerado localmente.');
+    const fallbackChapters = [];
+    for (let i = 1; i <= numChapters; i += 1) {
+      fallbackChapters.push(`Capítulo ${i}: ${niche} — parte ${i}`);
+    }
+    return {
+      subtitle: `Um guia prático sobre ${niche}`,
+      description: `Um e-book sobre ${niche}, escrito para ${targetAudience}.`,
+      chapters: fallbackChapters,
+    };
   }
 
   return {

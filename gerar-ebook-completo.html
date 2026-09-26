@@ -129,6 +129,9 @@
       <option value="moderna, tons escuros e neon">Moderna / escura</option>
     </select>
 
+    <button id="btnTeste" onclick="testeRapido()" style="background:#5b7a9d;">🔍 Teste rápido (1 bloco, ~20 segundos)</button>
+    <div id="statusTeste" style="font-size:0.85rem;margin-top:6px;min-height:1.2em;"></div>
+
     <button id="btnGerar" onclick="gerarLivroCompleto()">Gerar o e-book completo</button>
 
     <div id="outlineBox" class="outline-box">
@@ -162,6 +165,45 @@ function atualizarEstimativa() {
   document.getElementById('totalEstimate').textContent =
     'Total estimado: ' + chapters + ' capítulos × ' + pages + ' páginas ≈ ' + totalPages +
     ' páginas no livro (~' + totalWords.toLocaleString('pt-BR') + ' palavras)';
+}
+
+async function testeRapido() {
+  const base = getBase();
+  const btn = document.getElementById('btnTeste');
+  const statusEl = document.getElementById('statusTeste');
+  if (!base) { statusEl.textContent = '❌ Cole o endereço do site primeiro.'; statusEl.style.color = 'var(--err)'; return; }
+
+  btn.disabled = true;
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = '⏳ Testando conexão com o servidor (pode demorar até 1 minuto se ele estava "dormindo")...';
+
+  try {
+    const res = await fetch(base + '/api/generate-block', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        bookTitle: 'Teste', chapterTitle: 'Capítulo de Teste', blockNumber: 1, blocksPerChapter: 1,
+        niche: document.getElementById('niche').value || 'teste',
+        targetAudience: document.getElementById('audience').value || 'teste',
+        tone: 'direto', recentContext: ''
+      })
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok || !data || !data.success) {
+      throw new Error((data && (data.error || data.details)) || ('Erro HTTP ' + res.status + ' — o servidor respondeu, mas com problema.'));
+    }
+    statusEl.style.color = 'var(--ok)';
+    statusEl.textContent = '✅ Conexão funcionando! O servidor gerou texto normalmente. Pode usar o botão de baixo com confiança.';
+  } catch (err) {
+    statusEl.style.color = 'var(--err)';
+    if (err.message === 'Failed to fetch') {
+      statusEl.textContent = '❌ Não conseguiu nem conversar com o servidor. Confira se o endereço está certo e sem erro de digitação, e se o serviço está "Live" no Render.';
+    } else {
+      statusEl.textContent = '❌ ' + err.message;
+    }
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function getBase() {
