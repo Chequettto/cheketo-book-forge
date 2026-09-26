@@ -18,6 +18,39 @@ const EDITOR_SYSTEM =
   "É terminantemente proibido usar frases de efeito vazias, repetições, autorreferências ('neste capítulo veremos...'), " +
   "clichês de IA e encheção de linguiça.";
 
+const AUDITOR_SYSTEM =
+  "Você é um revisor editorial implacável de livros brasileiros. Primeiro audita o texto com rigor, " +
+  "apontando repetições cansativas, enrolação, falta de profundidade e desvios do tema. Em seguida reescreve " +
+  "o texto eliminando esses defeitos, elevando o nível técnico e literário, sem inventar fatos e mantendo o tamanho aproximado. " +
+  "Responde SEMPRE neste formato exato:\nCRITICA:\n<lista curta de defeitos>\nTEXTO:\n<texto final lapidado>";
+
+/** Audita e lapida um bloco recém-escrito antes de salvá-lo. */
+async function auditAndPolish(
+  raw: string,
+  context: string,
+  ebookId: string,
+): Promise<{ text: string; critique: string; source: string } | null> {
+  try {
+    const { generateAiText, providerLabel } = await import("./ai-text.server");
+    const result = await generateAiText(
+      AUDITOR_SYSTEM,
+      `${context}\n\nTexto bruto a auditar e lapidar:\n"""\n${raw}\n"""`,
+      { stage: "chapter_audit", ebookId, maxTokens: 3500, temperature: 0.4 },
+    );
+    const match = result.text.match(/CRITICA:\s*([\s\S]*?)\n\s*TEXTO:\s*([\s\S]+)/i);
+    if (!match) return null;
+    const critique = (match[1] ?? "").trim();
+    const text = (match[2] ?? "").trim();
+    // Só aceita a versão lapidada se ela não tiver encolhido demais.
+    const rawWords = raw.split(/\s+/).filter(Boolean).length;
+    if (text.split(/\s+/).filter(Boolean).length < rawWords * 0.6) return null;
+    return { text, critique, source: providerLabel(result) };
+  } catch {
+    // A auditoria nunca pode travar a produção: mantém o rascunho se falhar.
+    return null;
+  }
+}
+
 /** Cria o e-book e gera a estrutura (sumário) de capítulos. */
 export const createEbook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -44,8 +77,8 @@ export const createEbook = createServerFn({ method: "POST" })
       .single();
     if (error || !ebook) throw new Error(error?.message ?? "Falha ao criar o e-book.");
 
-    const { generateGroqText } = await import("./groq.server");
-    const result = await generateGroqText(
+    const { generateAiText, providerLabel } = await import("./ai-text.server");
+    const result = await generateAiText(
       EDITOR_SYSTEM,
       `Crie o sumário de um e-book.
 Título: ${data.title}
@@ -56,7 +89,7 @@ Meta de volume: ${data.pagesCount} páginas no total.
 
 Retorne EXATAMENTE ${data.chaptersCount} títulos de capítulos, um por linha, numerados no formato "1. Título".
 Cada título deve ser específico e progressivo (sem repetir ideias). Não escreva mais nada.`,
-      { stage: "outline", ebookId: ebook.id },
+      { stage: "outline", ebookId: ebook.id, maxTokens: 2500 },
     );
     const raw = result.text;
 
@@ -91,15 +124,30 @@ Cada título deve ser específico e progressivo (sem repetir ideias). Não escre
       .update({
         status: "writing",
         progress: 5,
-        progress_label: `Gerando Sumário do E-book (Groq Chave ${result.keyIndex}/6)...`,
+        progress_label: `Sumário pronto (${providerLabel(result)})`,
       })
       .eq("id", ebook.id);
 
-    return { ebookId: ebook.id, titles, keyIndex: result.keyIndex };
+    return {
+      ebookId: ebook.id,
+      titles,
+      source: providerLabel(result),
+      blocksPerChapter: blocksPerChapter(data.pagesCount, data.chaptersCount),
+    };
   });
 
 function limitWords(text: string, maxWords: number) {
   return text.trim().split(/\s+/).slice(0, maxWords).join(" ").trim();
+}
+
+/** Palavras-alvo de cada bloco: pequeno o bastante para nunca estourar tempo. */
+const BLOCK_WORDS = 400;
+const MAX_BLOCKS = 20;
+
+/** Quantos blocos de ~400 palavras cada capítulo precisa para bater a meta. */
+export function blocksPerChapter(pagesCount: number, chaptersCount: number): number {
+  const wordsPerChapter = Math.max(1200, Math.round((pagesCount * 320) / Math.max(1, chaptersCount)));
+  return Math.min(MAX_BLOCKS, Math.max(3, Math.ceil(wordsPerChapter / BLOCK_WORDS)));
 }
 
 export const generateChapter = createServerFn({ method: "POST" })
@@ -109,7 +157,7 @@ export const generateChapter = createServerFn({ method: "POST" })
       .object({
         ebookId: z.string().uuid(),
         position: z.number().int().min(1),
-        blockIndex: z.number().int().min(1).max(6),
+        blockIndex: z.number().int().min(1).max(MAX_BLOCKS),
       })
       .parse(input),
   )
@@ -124,30 +172,33 @@ export const generateChapter = createServerFn({ method: "POST" })
 
     const { data: chapters } = await supabase
       .from("chapters")
-      .select("position, title, content")
+      .select("position, title, content, audit_report")
       .eq("ebook_id", data.ebookId)
       .order("position");
     const chapter = chapters?.find((item) => item.position === data.position);
     if (!chapter) throw new Error("Capítulo não encontrado.");
 
+    const totalBlocks = blocksPerChapter(ebook.pages_count, ebook.chapters_count);
     const existingContent = chapter.content?.trim() ?? "";
     const currentWords = existingContent ? existingContent.split(/\s+/).length : 0;
-    const maxWords = 4000;
+    const maxWords = totalBlocks * BLOCK_WORDS;
     if (currentWords >= maxWords) {
       return {
         position: data.position,
         blockIndex: data.blockIndex,
+        totalBlocks,
         words: currentWords,
         complete: true,
-        keyIndex: 0,
+        source: "já concluído",
       };
     }
 
     const outline = (chapters ?? []).map((item) => `${item.position}. ${item.title}`).join("\n");
-    const previousTail = existingContent.split(/\s+/).slice(-150).join(" ");
+    const previousTail = existingContent.split(/\s+/).slice(-120).join(" ");
     const remainingWords = maxWords - currentWords;
-    const { generateGroqText } = await import("./groq.server");
-    const result = await generateGroqText(
+    const isLastBlock = data.blockIndex >= totalBlocks || remainingWords <= BLOCK_WORDS;
+    const { generateAiText, providerLabel } = await import("./ai-text.server");
+    const result = await generateAiText(
       EDITOR_SYSTEM,
       `E-book: "${ebook.title}" — ${ebook.subtitle ?? ""}
 Tema geral e objetivos: ${ebook.niche}
@@ -156,31 +207,47 @@ Sumário completo:
 ${outline}
 
 Capítulo ${data.position}: "${chapter.title}"
-Sub-bloco atual: ${data.blockIndex} de 6
-Escreva somente o próximo sub-bloco, com 600 a 800 palavras, desenvolvendo uma ideia nova e prática do capítulo.
-Use subtítulos curtos, exemplos concretos e passos acionáveis. Não repita conteúdo anterior e não use uma conclusão genérica.
-${previousTail ? `Últimas 150 palavras do sub-bloco anterior para manter a continuidade:\n${previousTail}` : "Este é o primeiro sub-bloco; introduza o tema diretamente."}
+Bloco atual: ${data.blockIndex} de ${totalBlocks}
+Escreva SOMENTE este bloco, com aproximadamente ${BLOCK_WORDS} palavras (entre 350 e 450), desenvolvendo uma ideia nova e prática do capítulo.
+Use subtítulos curtos, exemplos concretos e passos acionáveis. Não repita conteúdo anterior e não escreva uma conclusão genérica.
+${previousTail ? `Últimas 120 palavras do bloco anterior, para manter a continuidade:\n${previousTail}` : "Este é o primeiro bloco; entre direto no tema."}
 
-${remainingWords <= 800 ? `Este é o último espaço disponível. Escreva no máximo ${remainingWords} palavras e finalize o capítulo.\n` : ""}
+${isLastBlock ? `Este é o último bloco do capítulo: feche o raciocínio em no máximo ${Math.min(BLOCK_WORDS + 80, remainingWords)} palavras.\n` : ""}
 Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]] ao final da resposta.`,
-      { stage: "chapter_block", ebookId: data.ebookId },
+      { stage: "chapter_block", ebookId: data.ebookId, maxTokens: 3000 },
     );
 
     const completedByMarker = /\[\[CAPITULO_CONCLUIDO\]\]/i.test(result.text);
+    const draft = result.text.replace(/\[\[CAPITULO_CONCLUIDO\]\]/gi, "");
+
+    // Auditoria crítica + lapidação do bloco antes de salvar (nunca bloqueia a produção).
+    const polished = await auditAndPolish(
+      draft,
+      `E-book "${ebook.title}". Capítulo ${data.position}: "${chapter.title}". Tema: ${ebook.niche}`,
+      data.ebookId,
+    );
     const block = limitWords(
-      result.text.replace(/\[\[CAPITULO_CONCLUIDO\]\]/gi, ""),
-      Math.min(800, remainingWords),
+      polished?.text ?? draft,
+      Math.min(BLOCK_WORDS + 120, remainingWords),
     );
     const combined = [existingContent, block].filter(Boolean).join("\n\n").trim();
     const totalWords = combined.split(/\s+/).filter(Boolean).length;
-    const complete = completedByMarker || totalWords >= maxWords || data.blockIndex >= 6;
-    const progress = Math.round(5 + (data.position / ebook.chapters_count) * 80);
+    const complete =
+      completedByMarker || totalWords >= maxWords || data.blockIndex >= totalBlocks;
+    const blockProgress =
+      5 + ((data.position - 1 + data.blockIndex / totalBlocks) / ebook.chapters_count) * 80;
+    const progress = Math.min(85, Math.round(blockProgress));
+    const source = providerLabel(result);
+    const previousAudit = chapter.audit_report?.trim() ?? "";
+    const auditEntry = polished
+      ? `Bloco ${data.blockIndex}/${totalBlocks} — auditado e lapidado (${polished.source}):\n${polished.critique}`
+      : `Bloco ${data.blockIndex}/${totalBlocks} — auditoria indisponível, rascunho mantido.`;
 
     await supabase
       .from("chapters")
       .update({
         content: combined,
-        audit_report: complete ? "Concluído pela geração fracionada da Groq." : null,
+        audit_report: [previousAudit, auditEntry].filter(Boolean).join("\n\n"),
       })
       .eq("ebook_id", data.ebookId)
       .eq("position", data.position);
@@ -188,19 +255,21 @@ Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]
       .from("ebooks")
       .update({
         progress,
-        progress_label: `Escrevendo Capítulo ${data.position} - Sub-bloco ${data.blockIndex}/6 (Groq Chave ${result.keyIndex}/6)...`,
+        progress_label: `Capítulo ${data.position} — bloco ${data.blockIndex}/${totalBlocks} (${source})`,
       })
       .eq("id", data.ebookId);
 
     return {
       position: data.position,
       blockIndex: data.blockIndex,
+      totalBlocks,
       words: totalWords,
       progress,
-      keyIndex: result.keyIndex,
+      source,
       complete,
     };
   });
+
 
 /** Gera a capa em alta resolução a partir da descrição visual do usuário. */
 export const generateCover = createServerFn({ method: "POST" })

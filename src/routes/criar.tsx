@@ -48,7 +48,11 @@ function CreatePage() {
   const [current, setCurrent] = useState("");
   // Guarda o e-book em andamento quando a geração falha no meio, pra "Retomar"
   // não precisar chamar createEbook de novo nem reescrever capítulos prontos.
-  const [resumable, setResumable] = useState<{ ebookId: string; titles: string[] } | null>(null);
+  const [resumable, setResumable] = useState<{
+    ebookId: string;
+    titles: string[];
+    blocksPerChapter: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
@@ -79,28 +83,32 @@ function CreatePage() {
    * servidor (generateChapter detecta isso sozinho) — então chamar isso de
    * novo depois de uma falha não reescreve do zero, só continua de onde parou.
    */
-  async function runPipeline(ebookId: string, titles: string[]) {
+  async function runPipeline(ebookId: string, titles: string[], blocks: number) {
     setSteps(titles.map((label) => ({ label, done: false })));
 
     for (let position = 1; position <= titles.length; position++) {
       let complete = false;
-      for (let blockIndex = 1; blockIndex <= 6 && !complete; blockIndex++) {
-        setCurrent(`Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6...`);
+      let totalBlocks = blocks;
+      for (let blockIndex = 1; blockIndex <= totalBlocks && !complete; blockIndex++) {
+        setCurrent(`Capítulo ${position} — escrevendo bloco ${blockIndex}/${totalBlocks}…`);
         let result;
         try {
           result = await runChapter({ data: { ebookId, position, blockIndex } });
         } catch {
-          setCurrent(`Capítulo ${position} - Sub-bloco ${blockIndex}/6: tentando novamente...`);
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          setCurrent(`Capítulo ${position} — bloco ${blockIndex}: tentando com outra chave…`);
+          await new Promise((resolve) => setTimeout(resolve, 4000));
           result = await runChapter({ data: { ebookId, position, blockIndex } });
         }
         complete = result.complete;
+        totalBlocks = result.totalBlocks ?? totalBlocks;
         setCurrent(
-          `Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6 (Groq Chave ${result.keyIndex}/6)...`,
+          `Capítulo ${position} — bloco ${blockIndex}/${totalBlocks} pronto (${result.source})`,
         );
+        // Respiro curto entre blocos para não estourar o limite por minuto.
+        if (!complete) await new Promise((resolve) => setTimeout(resolve, 900));
       }
       setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
-      if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1200));
     }
 
     if (coverMode === "upload" && coverFile) {
@@ -126,12 +134,17 @@ function CreatePage() {
     setRunning(true);
     setSteps([]);
     setResumable(null);
-    let created: { ebookId: string; titles: string[]; keyIndex: number } | null = null;
+    let created: {
+      ebookId: string;
+      titles: string[];
+      source: string;
+      blocksPerChapter: number;
+    } | null = null;
     try {
-      setCurrent("Gerando Sumário do E-book (Groq)...");
+      setCurrent("Montando o sumário do e-book…");
       created = await runCreate({ data: form });
-      setCurrent(`Gerando Sumário do E-book (Groq Chave ${created.keyIndex}/6)...`);
-      await runPipeline(created.ebookId, created.titles);
+      setCurrent(`Sumário pronto (${created.source})`);
+      await runPipeline(created.ebookId, created.titles, created.blocksPerChapter);
     } catch (error) {
       if (created) setResumable(created);
       toast.error(error instanceof Error ? error.message : "Falha na geração.");
@@ -144,7 +157,7 @@ function CreatePage() {
     if (!resumable) return;
     setRunning(true);
     try {
-      await runPipeline(resumable.ebookId, resumable.titles);
+      await runPipeline(resumable.ebookId, resumable.titles, resumable.blocksPerChapter);
       setResumable(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Falha ao retomar a geração.");
