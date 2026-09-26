@@ -91,11 +91,16 @@ Cada título deve ser específico e progressivo (sem repetir ideias). Não escre
       .update({
         status: "writing",
         progress: 5,
-        progress_label: `Gerando Sumário do E-book (Groq Chave ${result.keyIndex}/6)...`,
+        progress_label: `Sumário pronto (${providerLabel(result)})`,
       })
       .eq("id", ebook.id);
 
-    return { ebookId: ebook.id, titles, keyIndex: result.keyIndex };
+    return {
+      ebookId: ebook.id,
+      titles,
+      source: providerLabel(result),
+      blocksPerChapter: blocksPerChapter(data.pagesCount, data.chaptersCount),
+    };
   });
 
 function limitWords(text: string, maxWords: number) {
