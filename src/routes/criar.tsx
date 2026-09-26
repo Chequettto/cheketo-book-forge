@@ -48,7 +48,11 @@ function CreatePage() {
   const [current, setCurrent] = useState("");
   // Guarda o e-book em andamento quando a geração falha no meio, pra "Retomar"
   // não precisar chamar createEbook de novo nem reescrever capítulos prontos.
-  const [resumable, setResumable] = useState<{ ebookId: string; titles: string[] } | null>(null);
+  const [resumable, setResumable] = useState<{
+    ebookId: string;
+    titles: string[];
+    blocksPerChapter: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!loading && !session) navigate({ to: "/auth", search: { next: "/criar" } });
