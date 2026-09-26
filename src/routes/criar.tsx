@@ -79,28 +79,32 @@ function CreatePage() {
    * servidor (generateChapter detecta isso sozinho) — então chamar isso de
    * novo depois de uma falha não reescreve do zero, só continua de onde parou.
    */
-  async function runPipeline(ebookId: string, titles: string[]) {
+  async function runPipeline(ebookId: string, titles: string[], blocks: number) {
     setSteps(titles.map((label) => ({ label, done: false })));
 
     for (let position = 1; position <= titles.length; position++) {
       let complete = false;
-      for (let blockIndex = 1; blockIndex <= 6 && !complete; blockIndex++) {
-        setCurrent(`Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6...`);
+      let totalBlocks = blocks;
+      for (let blockIndex = 1; blockIndex <= totalBlocks && !complete; blockIndex++) {
+        setCurrent(`Capítulo ${position} — escrevendo bloco ${blockIndex}/${totalBlocks}…`);
         let result;
         try {
           result = await runChapter({ data: { ebookId, position, blockIndex } });
         } catch {
-          setCurrent(`Capítulo ${position} - Sub-bloco ${blockIndex}/6: tentando novamente...`);
-          await new Promise((resolve) => setTimeout(resolve, 5000));
+          setCurrent(`Capítulo ${position} — bloco ${blockIndex}: tentando com outra chave…`);
+          await new Promise((resolve) => setTimeout(resolve, 4000));
           result = await runChapter({ data: { ebookId, position, blockIndex } });
         }
         complete = result.complete;
+        totalBlocks = result.totalBlocks ?? totalBlocks;
         setCurrent(
-          `Escrevendo Capítulo ${position} - Sub-bloco ${blockIndex}/6 (Groq Chave ${result.keyIndex}/6)...`,
+          `Capítulo ${position} — bloco ${blockIndex}/${totalBlocks} pronto (${result.source})`,
         );
+        // Respiro curto entre blocos para não estourar o limite por minuto.
+        if (!complete) await new Promise((resolve) => setTimeout(resolve, 900));
       }
       setSteps((prev) => prev.map((s, i) => (i === position - 1 ? { ...s, done: true } : s)));
-      if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1500));
+      if (position < titles.length) await new Promise((resolve) => setTimeout(resolve, 1200));
     }
 
     if (coverMode === "upload" && coverFile) {
