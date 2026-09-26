@@ -216,8 +216,16 @@ Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]
     );
 
     const completedByMarker = /\[\[CAPITULO_CONCLUIDO\]\]/i.test(result.text);
+    const draft = result.text.replace(/\[\[CAPITULO_CONCLUIDO\]\]/gi, "");
+
+    // Auditoria crítica + lapidação do bloco antes de salvar (nunca bloqueia a produção).
+    const polished = await auditAndPolish(
+      draft,
+      `E-book "${ebook.title}". Capítulo ${data.position}: "${chapter.title}". Tema: ${ebook.niche}`,
+      data.ebookId,
+    );
     const block = limitWords(
-      result.text.replace(/\[\[CAPITULO_CONCLUIDO\]\]/gi, ""),
+      polished?.text ?? draft,
       Math.min(BLOCK_WORDS + 120, remainingWords),
     );
     const combined = [existingContent, block].filter(Boolean).join("\n\n").trim();
@@ -228,12 +236,16 @@ Ao concluir logicamente o capítulo, acrescente exatamente [[CAPITULO_CONCLUIDO]
       5 + ((data.position - 1 + data.blockIndex / totalBlocks) / ebook.chapters_count) * 80;
     const progress = Math.min(85, Math.round(blockProgress));
     const source = providerLabel(result);
+    const previousAudit = chapter.audit_report?.trim() ?? "";
+    const auditEntry = polished
+      ? `Bloco ${data.blockIndex}/${totalBlocks} — auditado e lapidado (${polished.source}):\n${polished.critique}`
+      : `Bloco ${data.blockIndex}/${totalBlocks} — auditoria indisponível, rascunho mantido.`;
 
     await supabase
       .from("chapters")
       .update({
         content: combined,
-        audit_report: complete ? `Capítulo concluído em blocos de ${BLOCK_WORDS} palavras.` : null,
+        audit_report: [previousAudit, auditEntry].filter(Boolean).join("\n\n"),
       })
       .eq("ebook_id", data.ebookId)
       .eq("position", data.position);
