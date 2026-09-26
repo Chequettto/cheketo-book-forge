@@ -18,6 +18,37 @@ const EDITOR_SYSTEM =
   "É terminantemente proibido usar frases de efeito vazias, repetições, autorreferências ('neste capítulo veremos...'), " +
   "clichês de IA e encheção de linguiça.";
 
+const AUDITOR_SYSTEM =
+  "Você é um revisor editorial implacável de livros brasileiros. Primeiro audita o texto com rigor, " +
+  "apontando repetições cansativas, enrolação, falta de profundidade e desvios do tema. Em seguida reescreve " +
+  "o texto eliminando esses defeitos, elevando o nível técnico e literário, sem inventar fatos e mantendo o tamanho aproximado. " +
+  "Responde SEMPRE neste formato exato:\nCRITICA:\n<lista curta de defeitos>\nTEXTO:\n<texto final lapidado>";
+
+/** Audita e lapida um bloco recém-escrito antes de salvá-lo. */
+async function auditAndPolish(
+  raw: string,
+  context: string,
+  ebookId: string,
+): Promise<{ text: string; critique: string; source: string } | null> {
+  try {
+    const { generateAiText, providerLabel } = await import("./ai-text.server");
+    const result = await generateAiText(
+      AUDITOR_SYSTEM,
+      `${context}\n\nTexto bruto a auditar e lapidar:\n"""\n${raw}\n"""`,
+      { stage: "chapter_audit", ebookId, maxTokens: 3500, temperature: 0.4 },
+    );
+    const match = result.text.match(/CRITICA:\s*([\s\S]*?)\n\s*TEXTO:\s*([\s\S]+)/i);
+    if (!match) return null;
+    const critique = match[1].trim();
+    const text = match[2].trim();
+    if (text.split(/\s+/).length < 120) return null;
+    return { text, critique, source: providerLabel(result) };
+  } catch {
+    // A auditoria nunca pode travar a produção: mantém o rascunho se falhar.
+    return null;
+  }
+}
+
 /** Cria o e-book e gera a estrutura (sumário) de capítulos. */
 export const createEbook = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
